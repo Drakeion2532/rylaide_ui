@@ -10,6 +10,15 @@ function startMockUpstream() {
     if (url.pathname.startsWith('/route/v1/driving/')) {
       const [a, b] = url.pathname.split('/').pop().split(';').map((p) => p.split(',').map(Number));
       if (a[0] === 0 && a[1] === 0) return res.end(JSON.stringify({ code: 'NoRoute', routes: [] }));
+      const alt = (distance, duration, bend) => ({
+        distance, duration,
+        geometry: { type: 'LineString', coordinates: [a, [(a[0] + b[0]) / 2 + bend, (a[1] + b[1]) / 2 + bend], b] },
+        legs: [{ steps: [
+          { distance: 300, duration: 40, name: 'Station Rd', maneuver: { type: 'depart', bearing_after: 0, location: a } },
+          { distance: 0, duration: 0, name: '', maneuver: { type: 'arrive', location: b } },
+        ] }],
+      });
+      const extra = url.searchParams.get('alternatives') ? [alt(13100, 1300, 0.01), alt(15800, 2100, -0.02)] : [];
       return res.end(JSON.stringify({
         code: 'Ok',
         routes: [{
@@ -21,7 +30,7 @@ function startMockUpstream() {
             { distance: 5000, duration: 600, name: '', maneuver: { type: 'roundabout', exit: 2, location: b } },
             { distance: 0, duration: 0, name: '', maneuver: { type: 'arrive', location: b } },
           ] }],
-        }],
+        }, ...extra],
       }));
     }
     if (url.pathname === '/search') {

@@ -1,200 +1,233 @@
-import { h, initials } from './util.js';
+// MapLibre wrapper styled to Figma "Map / Base": neutral grey streets, primary route, dashed grey alternatives,
+// red destination pin, blue "me" puck with heading cone. Tiles: OpenFreeMap (Positron by day, Dark at night).
+import { h, initials, etaShort } from './util.js';
+import { ic } from './ui.js';
 
-const STYLES = {
-  light: ['https://tiles.openfreemap.org/styles/liberty'],
-  dark: ['https://tiles.openfreemap.org/styles/dark', 'https://tiles.openfreemap.org/styles/liberty'],
+const STYLE = {
+  day: ['https://tiles.openfreemap.org/styles/positron', 'https://tiles.openfreemap.org/styles/liberty'],
+  night: ['https://tiles.openfreemap.org/styles/dark', 'https://tiles.openfreemap.org/styles/positron'],
 };
-const DEFAULT_CENTER = [73.8567, 18.5204]; // Pune; replaced by the rider's location as soon as we have it
+const PUNE = [73.8567, 18.5204];
+const styleCache = {};
 
-function loadScript(src) {
-  return new Promise((res, rej) => {
-    if (window.maplibregl) return res();
+function loadLib() {
+  if (window.maplibregl) return Promise.resolve();
+  if (loadLib.p) return loadLib.p;
+  loadLib.p = new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = src; s.onload = res; s.onerror = () => rej(new Error('map library failed to load'));
+    s.src = '/vendor/maplibre/maplibre-gl.js'; s.onload = res; s.onerror = () => rej(new Error('map library failed to load'));
     document.head.append(s);
   });
+  return loadLib.p;
 }
 
-async function fetchStyle(urls) {
-  for (const url of urls) {
+async function getStyle(kind) {
+  if (styleCache[kind] !== undefined) return styleCache[kind];
+  for (const url of STYLE[kind]) {
     try {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 6000);
+      const t = setTimeout(() => ctrl.abort(), 5000);
       const r = await fetch(url, { signal: ctrl.signal });
       clearTimeout(t);
-      if (r.ok) return { style: await r.json(), ok: true };
-    } catch { /* try next */ }
+      if (r.ok) return (styleCache[kind] = await r.json());
+    } catch { /* next */ }
   }
-  return { style: null, ok: false };
+  styleCache[kind] = null;
+  setTimeout(() => { delete styleCache[kind]; }, 60000); // try the network again later
+  return null;
 }
-
-function blankStyle(dark) {
-  return {
-    version: 8, sources: {},
-    layers: [{ id: 'bg', type: 'background', paint: { 'background-color': dark ? '#232B36' : '#E9EDF0' } }],
-  };
-}
+const blank = (night) => ({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': night ? '#1e1f22' : '#e9e8ed' } }] });
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const isNight = () => !!document.documentElement.dataset.light;
 
 export class RideMap {
-  constructor(el, { onBanner } = {}) {
-    this.el = el;
-    this.onBanner = onBanner || (() => {});
-    this.map = null;
-    this.ready = false;
-    this.riders = new Map(); // userId -> {marker, el, data}
-    this.me = null;
-    this.follow = true;
-    this.pending = [];
-    this.dark = false;
+  constructor(el, { interactive = true, center, zoom = 14, onFollowChange } = {}) {
+    this.el = el; this.interactive = interactive; this.center = center; this.zoom = zoom;
+    this.onFollowChange = onFollowChange || (() => {});
+    this.riders = new Map(); this.labels = []; this.queue = []; this.ready = false; this.follow = true;
   }
 
-  async init(dark) {
-    this.dark = dark;
-    try {
-      await loadScript('/vendor/maplibre/maplibre-gl.js');
-    } catch {
-      return this.fail();
-    }
-    const { style, ok } = await fetchStyle(dark ? STYLES.dark : STYLES.light);
-    if (!ok) this.onBanner('Map tiles couldn’t load. Riders and routes still show; the map fills in when you’re back online.');
+  async init() {
+    try { await loadLib(); } catch { return this.fail(); }
+    const night = isNight();
+    const style = await getStyle(night ? 'night' : 'day');
+    this.tilesOk = !!style;
+    if (!this.el.isConnected) return false;
     try {
       this.map = new window.maplibregl.Map({
-        container: this.el, style: style || blankStyle(dark), center: DEFAULT_CENTER, zoom: 12,
-        attributionControl: { compact: true }, pitchWithRotate: false, dragRotate: false, fadeDuration: 150,
+        container: this.el, style: style || blank(night), center: this.center || PUNE, zoom: this.zoom,
+        attributionControl: false, interactive: this.interactive, pitchWithRotate: false, dragRotate: false, fadeDuration: 120,
       });
-    } catch {
-      return this.fail();
-    }
-    this.map.touchZoomRotate.disableRotation();
-    this.map.on('dragstart', () => { this.follow = false; this.el.dispatchEvent(new CustomEvent('follow', { detail: false })); });
-    this.map.on('error', () => { /* tile errors are non-fatal; keep riding */ });
+    } catch { return this.fail(); }
+    this.map.touchZoomRotate?.disableRotation();
+    this.map.on('error', () => {});
+    this.map.on('dragstart', () => { if (this.follow) { this.follow = false; this.onFollowChange(false); } });
+    if (style) this.el.append(h('div', { class: 'map-attrib' }, '© OpenStreetMap · OpenFreeMap'));
     await new Promise((r) => (this.map.loaded() ? r() : this.map.once('load', r)));
-    this.addRouteLayers();
+    this.addLayers();
     this.ready = true;
-    this.pending.splice(0).forEach((fn) => fn());
+    this.queue.splice(0).forEach((f) => f());
+    this.themeOff = (() => { const f = () => this.retheme(); window.addEventListener('rylaide:theme', f); return () => window.removeEventListener('rylaide:theme', f); })();
     return true;
   }
+  fail() { this.el.append(h('p', { class: 'map-fallback-note body-m' }, 'The map can’t be shown on this device.')); return false; }
+  when(f) { this.ready ? f() : this.queue.push(f); }
+  destroy() { this.themeOff?.(); try { this.map?.remove(); } catch { /* ignore */ } this.map = null; }
+  resize() { this.when(() => this.map.resize()); }
 
-  fail() {
-    document.getElementById('map-fallback').hidden = false;
-    this.ready = false;
-    return false;
+  async retheme() {
+    if (!this.map) return;
+    const night = isNight();
+    if (night === this.night) return;
+    this.night = night;
+    const style = await getStyle(night ? 'night' : 'day');
+    this.map.setStyle(style || blank(night));
+    this.map.once('styledata', () => { this.addLayers(); this.setRoutes(this.routes, this.sel); this.setTrack(this.track); });
   }
 
-  whenReady(fn) { this.ready ? fn() : this.pending.push(fn); }
-
-  async setTheme(dark) {
-    if (!this.map || dark === this.dark) return;
-    this.dark = dark;
-    const { style } = await fetchStyle(dark ? STYLES.dark : STYLES.light);
-    this.map.setStyle(style || blankStyle(dark));
-    this.map.once('styledata', () => this.addRouteLayers(true));
-  }
-
-  addRouteLayers(restore = false) {
+  addLayers() {
     const m = this.map;
     const empty = { type: 'FeatureCollection', features: [] };
-    for (const id of ['route', 'track']) if (!m.getSource(id)) m.addSource(id, { type: 'geojson', data: empty });
-    if (!m.getLayer('route-casing')) m.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#1A222C', 'line-width': 10, 'line-opacity': .5 } });
-    if (!m.getLayer('route')) m.addLayer({ id: 'route', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#2FC9C3', 'line-width': 6 } });
-    if (!m.getLayer('track')) m.addLayer({ id: 'track', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#F98924', 'line-width': 5 } });
-    if (restore) { this.setRoute(this.routeGeo); this.setTrack(this.trackPts); }
+    const primary = cssVar('--primary') || '#0159c7';
+    for (const id of ['alts', 'route', 'track']) if (!m.getSource(id)) m.addSource(id, { type: 'geojson', data: empty });
+    if (!m.getLayer('alts')) m.addLayer({ id: 'alts', type: 'line', source: 'alts', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#6f727a', 'line-width': 5, 'line-dasharray': [1.2, 1.2] } });
+    if (!m.getLayer('route-casing')) m.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 9, 'line-opacity': .9 } });
+    if (!m.getLayer('route')) m.addLayer({ id: 'route', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': primary, 'line-width': 6 } });
+    if (!m.getLayer('track')) m.addLayer({ id: 'track', type: 'line', source: 'track', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': primary, 'line-width': 5, 'line-opacity': .55 } });
+    m.on('click', 'alts', (e) => this.onAltClick?.(e.features?.[0]?.properties?.i));
   }
 
-  riderEl(data, isMe) {
-    const el = h('div', { class: `rider${isMe ? ' me' : ''}` },
-      h('div', { class: 'rider-head', hidden: data.heading === null || data.heading === undefined }),
-      h('div', { class: 'rider-dot', style: `background:${data.color || '#2FC9C3'}` }, initials(data.name)),
-      isMe ? null : h('div', { class: 'rider-name' }, data.name));
-    return el;
-  }
-
-  upsertRider(data, isMe = false) {
-    this.whenReady(() => {
-      const key = isMe ? '__me' : data.userId;
-      let r = this.riders.get(key);
-      if (!r) {
-        const el = this.riderEl(data, isMe);
-        const marker = new window.maplibregl.Marker({ element: el }).setLngLat([data.lng, data.lat]).addTo(this.map);
-        r = { marker, el, data };
-        this.riders.set(key, r);
-        if (!isMe) el.addEventListener('click', () => this.map.easeTo({ center: [data.lng, data.lat], zoom: 15 }));
+  // ---------------------------------------------------------------- me + riders
+  setMe(pos) {
+    this.when(() => {
+      if (!this.me) {
+        this.meEl = h('div', { class: 'me-puck' }, h('div', { class: 'cone', hidden: true }), h('div', { class: 'dot' }, ic('navigation', { fill: true })));
+        this.me = new window.maplibregl.Marker({ element: this.meEl, rotationAlignment: 'map' }).setLngLat([pos.lng, pos.lat]).addTo(this.map);
       }
-      r.data = { ...r.data, ...data };
-      r.marker.setLngLat([data.lng, data.lat]);
-      const head = r.el.querySelector('.rider-head');
-      const hasHeading = Number.isFinite(data.heading) && (data.speed ?? 0) > 1;
-      head.hidden = !hasHeading;
-      if (hasHeading) head.style.transform = `rotate(${data.heading}deg)`;
-      const dot = r.el.querySelector('.rider-dot');
-      dot.style.background = data.color || dot.style.background;
-      if (!isMe) { dot.textContent = initials(data.name); r.el.querySelector('.rider-name').textContent = data.name; }
-      r.el.classList.remove('stale');
-      if (isMe && this.follow) this.map.easeTo({ center: [data.lng, data.lat], duration: 600 });
+      this.me.setLngLat([pos.lng, pos.lat]);
+      const moving = Number.isFinite(pos.heading) && (pos.speed ?? 0) > 1;
+      this.meEl.querySelector('.cone').hidden = !moving;
+      this.me.setRotation(moving ? pos.heading : 0);
+      if (this.follow) this.map.easeTo({ center: [pos.lng, pos.lat], duration: 600 });
     });
   }
 
-  markStale(maxAgeMs) {
-    const now = Date.now();
-    for (const [k, r] of this.riders) if (k !== '__me') r.el.classList.toggle('stale', now - (r.data.ts || 0) > maxAgeMs);
+  upsertRider(r, { sos } = {}) {
+    this.when(() => {
+      let m = this.riders.get(r.userId);
+      if (!m) {
+        const el = h('div', { class: 'rider-pin', 'data-rider': r.userId }, h('span', { class: 'avatar' }, initials(r.name)), h('span', { class: 'name' }, r.name.split(' ')[0]));
+        el.addEventListener('click', () => this.map.easeTo({ center: [r.lng, r.lat], zoom: 16 }));
+        m = { el, marker: new window.maplibregl.Marker({ element: el, anchor: 'top', offset: [0, -18] }).setLngLat([r.lng, r.lat]).addTo(this.map) };
+        this.riders.set(r.userId, m);
+      }
+      m.data = r;
+      m.marker.setLngLat([r.lng, r.lat]);
+      const av = m.el.querySelector('.avatar');
+      av.textContent = initials(r.name);
+      av.style.background = r.color || '';
+      av.style.color = '#fff';
+      m.el.querySelector('.name').textContent = r.name.split(' ')[0];
+      m.el.classList.toggle('sos', !!sos);
+      m.el.classList.remove('stale');
+    });
   }
-  setSos(userId, on) { const r = this.riders.get(userId); if (r) r.el.classList.toggle('sos', on); }
-  removeRider(userId) { const r = this.riders.get(userId); if (r) { r.marker.remove(); this.riders.delete(userId); } }
-  clearRiders() { for (const [k, r] of this.riders) if (k !== '__me') { r.marker.remove(); this.riders.delete(k); } }
+  setSos(userId, on) { const m = this.riders.get(userId); if (m) m.el.classList.toggle('sos', on); }
+  markStale(ms) { const now = Date.now(); for (const m of this.riders.values()) m.el.classList.toggle('stale', now - (m.data?.ts || 0) > ms); }
+  removeRider(id) { const m = this.riders.get(id); if (m) { m.marker.remove(); this.riders.delete(id); } }
 
-  centerOn(lng, lat, zoom = 15) { this.whenReady(() => this.map.easeTo({ center: [lng, lat], zoom })); }
-  setFollow(on) { this.follow = on; }
-
-  fitRiders() {
-    this.whenReady(() => {
-      const pts = [...this.riders.values()].map((r) => [r.data.lng, r.data.lat]);
-      if (this.destPt) pts.push(this.destPt);
-      if (!pts.length) return false;
-      if (pts.length === 1) return this.map.easeTo({ center: pts[0], zoom: 14 });
+  setFollow(on) { this.follow = on; this.onFollowChange(on); }
+  centerOn(lng, lat, zoom = 15) { this.when(() => this.map.easeTo({ center: [lng, lat], zoom, duration: 500 })); }
+  fitAll(extra = []) {
+    this.when(() => {
+      const pts = [...this.riders.values()].map((m) => [m.data.lng, m.data.lat]);
+      if (this.me) pts.push(this.me.getLngLat().toArray());
+      pts.push(...extra);
+      if (!pts.length) return;
+      if (pts.length === 1) return this.map.easeTo({ center: pts[0], zoom: 15 });
       const b = new window.maplibregl.LngLatBounds(pts[0], pts[0]);
       pts.forEach((p) => b.extend(p));
-      this.map.fitBounds(b, { padding: { top: 120, bottom: 260, left: 60, right: 60 }, maxZoom: 15, duration: 700 });
+      this.map.fitBounds(b, { padding: 70, maxZoom: 16, duration: 600 });
     });
   }
 
-  setRoute(geo) {
-    this.routeGeo = geo || null;
-    this.whenReady(() => {
-      this.map.getSource('route')?.setData(geo ? { type: 'Feature', geometry: geo, properties: {} } : { type: 'FeatureCollection', features: [] });
-      if (geo) {
-        const c = geo.coordinates;
-        const b = new window.maplibregl.LngLatBounds(c[0], c[0]);
-        c.forEach((p) => b.extend(p));
-        this.map.fitBounds(b, { padding: { top: 160, bottom: 280, left: 50, right: 50 }, duration: 800 });
+  // ---------------------------------------------------------------- routes
+  /** routes: array of {geometry, duration}; sel: selected index. Draws the selected route solid, the rest dashed with time labels. */
+  setRoutes(routes, sel = 0, { fit = true, labels = true, padding } = {}) {
+    this.routes = routes; this.sel = sel;
+    this.when(() => {
+      this.labels.forEach((l) => l.remove());
+      this.labels = [];
+      const main = routes?.[sel];
+      this.map.getSource('route')?.setData(main ? { type: 'Feature', geometry: main.geometry, properties: {} } : { type: 'FeatureCollection', features: [] });
+      this.map.getSource('alts')?.setData({ type: 'FeatureCollection', features: (routes || []).map((r, i) => (i === sel ? null : { type: 'Feature', geometry: r.geometry, properties: { i } })).filter(Boolean) });
+      if (main && this.map.getLayer('route')) this.map.setPaintProperty('route', 'line-color', cssVar('--primary') || '#0159c7');
+      if (labels && routes?.length > 1) {
+        routes.forEach((r, i) => {
+          const c = r.geometry.coordinates;
+          const at = c[Math.floor(c.length * (0.35 + 0.15 * i))] || c[0];
+          const el = h('span', { class: `route-label${i === sel ? ' on' : ''}`, role: 'button', 'aria-label': `Route ${i + 1}: ${etaShort(r.duration)}` }, i === sel ? ic('check') : null, etaShort(r.duration));
+          el.addEventListener('click', (e) => { e.stopPropagation(); this.onAltClick?.(i); });
+          this.labels.push(new window.maplibregl.Marker({ element: el }).setLngLat(at).addTo(this.map));
+        });
       }
+      if (fit && main) this.fitLine(main.geometry.coordinates, padding);
     });
   }
-
+  fitLine(coords, padding = { top: 90, bottom: 300, left: 40, right: 40 }) {
+    this.when(() => {
+      if (!coords?.length) return;
+      const b = new window.maplibregl.LngLatBounds(coords[0], coords[0]);
+      coords.forEach((p) => b.extend(p));
+      const box = this.el.getBoundingClientRect();
+      const pad = typeof padding === 'number' ? padding : { ...padding, bottom: Math.min(padding.bottom, box.height * 0.55), top: Math.min(padding.top, box.height * 0.2) };
+      this.map.fitBounds(b, { padding: pad, duration: 700, maxZoom: 16 });
+    });
+  }
   setDestination(lng, lat) {
-    this.whenReady(() => {
-      this.dest?.remove();
-      this.destPt = null;
+    this.when(() => {
+      this.dest?.remove(); this.dest = null;
       if (lng === null || lng === undefined) return;
-      this.destPt = [lng, lat];
-      this.dest = new window.maplibregl.Marker({ element: h('div', { class: 'dest-pin', title: 'Destination' }), anchor: 'bottom' }).setLngLat([lng, lat]).addTo(this.map);
+      this.dest = new window.maplibregl.Marker({ element: h('div', { class: 'dest-pin' }, ic('location_on', { fill: true })), anchor: 'bottom' }).setLngLat([lng, lat]).addTo(this.map);
     });
   }
-
+  setOrigin(lng, lat) {
+    this.when(() => {
+      this.origin?.remove(); this.origin = null;
+      if (lng === null || lng === undefined) return;
+      this.origin = new window.maplibregl.Marker({ element: h('div', { class: 'origin-dot' }) }).setLngLat([lng, lat]).addTo(this.map);
+    });
+  }
   setTrack(points) {
-    this.trackPts = points || null;
-    this.whenReady(() => {
+    this.track = points;
+    this.when(() => {
       const coords = (points || []).map((p) => [p[1], p[0]]);
       this.map.getSource('track')?.setData(coords.length > 1 ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} } : { type: 'FeatureCollection', features: [] });
     });
   }
+}
 
-  showTrack(points) {
-    this.setTrack(points);
-    this.whenReady(() => {
-      if (!points?.length) return;
-      const b = new window.maplibregl.LngLatBounds([points[0][1], points[0][0]], [points[0][1], points[0][0]]);
-      points.forEach((p) => b.extend([p[1], p[0]]));
-      this.map.fitBounds(b, { padding: 80, duration: 700 });
-    });
-  }
+/** Small static route thumbnail (no tiles): grid of streets + the route line + pin, like Figma's bento thumbnail. */
+export function routeThumb(points, { w = 200, hgt = 96 } = {}) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${hgt}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+  svg.setAttribute('aria-hidden', 'true');
+  const add = (tag, a) => { const e = document.createElementNS(NS, tag); Object.entries(a).forEach(([k, v]) => e.setAttribute(k, v)); svg.append(e); return e; };
+  add('rect', { width: w, height: hgt, fill: 'var(--surface-container-high)' });
+  for (let x = 28; x < w; x += 52) add('line', { x1: x, y1: 0, x2: x + 6, y2: hgt, stroke: 'var(--surface-container-lowest)', 'stroke-width': 5 });
+  for (let y = 22; y < hgt; y += 38) add('line', { x1: 0, y1: y + 3, x2: w, y2: y, stroke: 'var(--surface-container-lowest)', 'stroke-width': 5 });
+  let pts = (points || []).map((p) => [p[1], p[0]]);
+  if (pts.length < 2) pts = [[0, 0], [0, 1]];
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = 16, sx = (w - 2 * pad) / (maxX - minX || 1e-9), sy = (hgt - 2 * pad) / (maxY - minY || 1e-9), s = Math.min(sx, sy);
+  const ox = (w - (maxX - minX) * s) / 2, oy = (hgt - (maxY - minY) * s) / 2;
+  const P = pts.map(([x, y]) => [ox + (x - minX) * s, hgt - (oy + (y - minY) * s)]);
+  add('polyline', { points: P.map((p) => p.join(',')).join(' '), fill: 'none', stroke: 'var(--primary)', 'stroke-width': 5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+  const end = P[P.length - 1];
+  add('circle', { cx: end[0], cy: end[1] - 9, r: 7, fill: '#fff', stroke: '#c4161c', 'stroke-width': 3 });
+  add('circle', { cx: end[0], cy: end[1] - 9, r: 2, fill: '#c4161c' });
+  return svg;
 }

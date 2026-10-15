@@ -11,23 +11,23 @@ export function pickMime() {
   return '';
 }
 
-function constraints(deviceId) {
+function constraints(deviceId, noiseSuppression = true) {
   return {
     audio: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
-      echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
+      echoCancellation: true, noiseSuppression, autoGainControl: true, channelCount: 1,
     },
   };
 }
 
-export async function getMic(deviceId = store.get('micId', '')) {
+export async function getMic(deviceId = store.get('micId', ''), { noiseSuppression = true } = {}) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser can’t use the microphone. Open Rylaide in Chrome or Safari.');
   try {
-    return await navigator.mediaDevices.getUserMedia(constraints(deviceId));
+    return await navigator.mediaDevices.getUserMedia(constraints(deviceId, noiseSuppression));
   } catch (e) {
     if (deviceId && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
       store.del('micId');
-      return navigator.mediaDevices.getUserMedia(constraints(''));
+      return navigator.mediaDevices.getUserMedia(constraints('', noiseSuppression));
     }
     if (e.name === 'NotAllowedError') throw new Error('Microphone is blocked. Allow it in your browser’s site settings to talk to your group.');
     if (e.name === 'NotFoundError') throw new Error('No microphone found. Connect your headset or earphones.');
@@ -40,11 +40,11 @@ export class PushToTalk {
   constructor() { this.rec = null; this.stream = null; this.started = 0; }
   get active() { return !!this.rec; }
 
-  async start() {
+  async start(opts = {}) {
     if (this.rec) return;
     const mime = pickMime();
     if (mime === null) throw new Error('This browser can’t record voice. Open Rylaide in Chrome or Safari.');
-    this.stream = await getMic();
+    this.stream = await getMic(undefined, opts);
     this.chunks = [];
     this.rec = new MediaRecorder(this.stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : undefined);
     this.rec.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);

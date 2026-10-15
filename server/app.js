@@ -36,7 +36,15 @@ function createApp(opts = {}) {
   // ---------- helpers ----------
   const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
   const num = (v) => (v === '' || v === null || v === undefined ? NaN : Number(v));
-  const publicUser = (u) => u && { id: u.id, name: u.name, bike: u.bike, color: u.color };
+  const publicUser = (u) => u && { id: u.id, name: u.name, bike: u.bike, color: u.color, vehicle: u.vehicle || null };
+  // Bike shown on Home and in Garage. All fields optional; odometer in km.
+  function cleanVehicle(v) {
+    if (v === null) return null;
+    if (typeof v !== 'object') return undefined;
+    const odo = num(v.odometer);
+    if (v.odometer !== undefined && v.odometer !== '' && !(odo >= 0 && odo < 10_000_000)) return undefined;
+    return { make: clean(v.make, 30), model: clean(v.model, 40), odometer: Number.isFinite(odo) ? Math.round(odo) : null };
+  }
   const userByToken = (t) => db.users.find((u) => u.token === t);
   const groupOf = (gid) => db.groups.find((g) => g.id === gid);
   const isMember = (g, uid) => g && g.members.includes(uid);
@@ -72,6 +80,7 @@ function createApp(opts = {}) {
     const u = {
       id: id(), token: token(), name, bike: clean(req.body?.bike, 20) || 'motorcycle',
       color: COLORS[db.users.length % COLORS.length], createdAt: Date.now(),
+      vehicle: req.body?.vehicle ? cleanVehicle(req.body.vehicle) || null : null,
     };
     db.users.push(u);
     store.save();
@@ -88,6 +97,11 @@ function createApp(opts = {}) {
     if (req.body?.color !== undefined) {
       if (!/^#[0-9a-f]{6}$/i.test(req.body.color)) return fail(res, 400, 'Colour must be a hex value like #F98924.');
       req.user.color = req.body.color;
+    }
+    if (req.body?.vehicle !== undefined) {
+      const v = cleanVehicle(req.body.vehicle);
+      if (v === undefined) return fail(res, 400, 'Check the bike details: odometer must be a number of km.');
+      req.user.vehicle = v;
     }
     store.save();
     res.json({ user: publicUser(req.user) });
@@ -183,10 +197,13 @@ function createApp(opts = {}) {
     let distance = 0;
     for (let i = 1; i < points.length; i++) distance += haversine(points[i - 1], points[i]);
     const r = {
-      id: id(), userId: req.user.id, name: clean(b.name, 60) || `Ride on ${new Date().toDateString()}`,
+      id: id(), userId: req.user.id, name: clean(b.name, 60) || clean(b.destination, 80) || `Ride on ${new Date().toDateString()}`,
+      destination: clean(b.destination, 80) || null, origin: clean(b.origin, 80) || null,
+      groupName: clean(b.groupName, 40) || null, vehicle: req.user.vehicle?.model || null,
       startedAt: num(b.startedAt) || Date.now(), duration: Math.max(0, num(b.duration) || 0),
       distance: Math.round(distance), maxSpeed: Math.max(0, num(b.maxSpeed) || 0), points,
     };
+    r.avgSpeed = r.duration > 0 ? +(r.distance / r.duration).toFixed(2) : 0; // m/s
     db.rides.push(r);
     store.save();
     const { points: _p, ...summary } = r;
@@ -286,14 +303,23 @@ function createApp(opts = {}) {
     const from = coord(req.query.from), to = coord(req.query.to);
     if (!from || !to) return fail(res, 400, 'Route needs a start and a destination.');
     try {
-      const j = await upstream(`${cfg.osrm}/route/v1/driving/${from.join(',')};${to.join(',')}?overview=full&geometries=geojson&steps=true`, 10 * 60e3);
-      const r = j.routes?.[0];
-      if (!r) return fail(res, 404, 'No road route found between those points.');
-      const steps = (r.legs?.[0]?.steps || []).map((s) => ({
-        instruction: describeStep(s), distance: Math.round(s.distance), duration: Math.round(s.duration),
-        location: s.maneuver?.location,
-      }));
-      res.json({ distance: Math.round(r.distance), duration: Math.round(r.duration), geometry: r.geometry, steps });
+      const j = await upstream(`${cfg.osrm}/route/v1/driving/${from.join(',')};${to.join(',')}?overview=full&geometries=geojson&steps=true&alternatives=3`, 10 * 60e3);
+      if (!j.routes?.length) return fail(res, 404, 'No road route found between those points.');
+      const shape = (r) => ({
+        distance: Math.round(r.distance), duration: Math.round(r.duration), geometry: r.geometry,
+        steps: (r.legs?.[0]?.steps || []).map((s) => ({
+          instruction: describeStep(s), distance: Math.round(s.distance), duration: Math.round(s.duration),
+          location: s.maneuver?.location, type: s.maneuver?.type, modifier: s.maneuver?.modifier || null, road: s.name || '',
+        })),
+      });
+      const options = j.routes.slice(0, 3).map(shape);
+      // OSRM lists its preferred route first. Label the others by what they offer.
+      options[0].label = 'Best';
+      const rest = options.slice(1).sort((a, b) => a.duration - b.duration);
+      if (rest[0]) rest[0].label = rest[0].duration < options[0].duration ? 'Fastest' : 'Shorter';
+      if (rest[1]) rest[1].label = 'Scenic';
+      if (rest[0] && rest[0].label === 'Shorter' && rest[0].distance >= options[0].distance) rest[0].label = 'Scenic';
+      res.json({ ...options[0], options });
     } catch (e) {
       fail(res, 502, 'Routing is unavailable right now. Try again in a minute.');
     }
@@ -332,8 +358,8 @@ function createApp(opts = {}) {
 
   // ---------- static frontend ----------
   app.use('/vendor/maplibre', express.static(path.join(ROOT, 'node_modules/maplibre-gl/dist'), { maxAge: '7d' }));
-  app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource/barlow/files'), { maxAge: '30d' }));
-  app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource/barlow-condensed/files'), { maxAge: '30d' }));
+  app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource-variable/google-sans-flex/files'), { maxAge: '30d' }));
+  app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource/roboto/files'), { maxAge: '30d' }));
   app.use('/icons', express.static(path.join(ROOT, 'assets/icons/web'), { maxAge: '7d' }));
   app.use(express.static(path.join(ROOT, 'web'), { setHeaders: (res, p) => { if (p.endsWith('sw.js')) res.set('Cache-Control', 'no-cache'); } }));
   app.use('/api', (req, res) => fail(res, 404, 'Unknown API route.'));

@@ -2,6 +2,13 @@
 
 A riding companion for motorcycle groups. Install it on any phone from a link: no app store needed.
 
+The UI is built from the Figma file **Rylaide** (`01 — Foundations`, `02 — Components`): Material 3 colour roles,
+Google Sans Flex + Roboto, Material Symbols Rounded, Day / Evening / Night themes, the 8 rider accents,
+Glove Mode (64 → 80 dp ride controls) and the motion rules (300 ms forward slide, 200 ms tab fade-through,
+hold-to-confirm rings on SOS and talk). Screens follow the Figma navigation map: four tabs
+(Home · Groups · History · Garage), a 5-step ride setup, the ride hub (Map · Speed · Group), full-screen map,
+SOS countdown and ride summary.
+
 **What riders can do**
 - Create a group, or join one with a 6-letter code, invite link or QR
 - See every rider live on the map, with heading, distance away and online status
@@ -14,7 +21,7 @@ A riding companion for motorcycle groups. Install it on any phone from a link: n
 - Pre-ride checklist that adapts to your bike, trip length, time of day and the weather
 - Fuel log with full-tank mileage (km/l), spend and a trend chart
 - Mic test with a live level meter, record and playback
-- Light and dark themes, accent colour, glove mode (bigger buttons), spoken directions on/off
+- Auto Day / Evening / Night from sunrise and sunset (or fixed Light / Dark), 8 accent colours, Glove Mode, spoken directions on/off
 - Works offline for the app shell and recently seen map areas; reconnects automatically
 
 ## Run it locally
@@ -30,11 +37,27 @@ Location and microphone only work on `localhost` or HTTPS. To try it on your pho
 
 ```bash
 npm test                 # 11 backend tests: accounts, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
-npm run test:e2e         # 16 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm run test:e2e         # 14 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
 
 Map, routing, search and weather are faked in tests, so they run without internet.
+
+## Icons
+
+The app ships a 13 KB subset of Material Symbols Rounded with only the icons it uses. After adding an icon
+(`ic('icon_name')` anywhere in `web/js`), rebuild it:
+
+```bash
+pip install fonttools brotli
+npm run build:icons
+```
+
+## Photos
+
+`web/img/` holds the bike, group and road photos from the Figma *Imagery library (Unsplash, free licence)*.
+They are the library's 240 px thumbnails, so the Home hero looks soft on big screens. To swap in full-size
+photos, replace the four JPEGs with the originals (same names, about 1200 px wide).
 
 ## Deploy for launch (Render, about 10 minutes)
 
@@ -99,7 +122,9 @@ Colours: asphalt `#232B36`, hazard orange `#F98924`, signal teal `#2FC9C3`.
 
 ```
 server/   Express + WebSocket backend (app.js), JSON store
-web/      The app: index.html, styles.css, js/ (app, map, voice, tools, api, util), service worker
+web/      The app: index.html, styles.css (Figma tokens + components), service worker
+web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), ui (components), theme, map, voice
+web/js/screens/  onboarding, home, groups, history (+ summary), garage (+ fuel, settings, contacts, mic test), setup, ride
 tests/    api.test.js (node:test), e2e.py (Playwright, two riders)
 assets/   Logo and icon sets
 ```

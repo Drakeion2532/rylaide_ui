@@ -13,8 +13,17 @@ export function h(tag, props = {}, ...kids) {
     else if (k in el && typeof v !== 'string') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
-  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false && kid !== '') el.append(kid instanceof Node ? kid : String(kid));
   return el;
+}
+
+// Optional children are written as `cond ? el : null` throughout the UI. Make append/replaceChildren
+// skip empty values (and flatten arrays) instead of printing "null" — one fix for a whole class of bugs.
+for (const m of ['append', 'prepend', 'replaceChildren']) {
+  const orig = Element.prototype[m];
+  Element.prototype[m] = function (...kids) {
+    return orig.apply(this, kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
+  };
 }
 
 export function toast(text, { error = false, ms = 3200, action } = {}) {
@@ -92,3 +101,18 @@ export function base64ToBlob(b64, type) {
 
 /** Today's date in the rider's own time zone, as YYYY-MM-DD. */
 export const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** "58 min" · "1h 12" — the compact form used on route labels and option cards. */
+export function etaShort(sec) {
+  const m = Math.max(1, Math.round(sec / 60));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}`;
+}
+/** "Mon, 5 Oct" */
+export const fmtDay = (d = new Date()) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/^(\w+) /, '$1, ');
+/** Odometer style: 31,220 */
+export const fmtInt = (n) => Math.round(n).toLocaleString('en-IN');
+/** "2h 14m" · "14 min" */
+export function durShort(sec) {
+  const m = Math.max(0, Math.round(sec / 60));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}

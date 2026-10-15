@@ -7,7 +7,8 @@
     "start": "node server/index.js",
     "test": "node --test tests/api.test.js",
     "test:e2e": "bash scripts/e2e.sh",
-    "test:all": "npm test && npm run test:e2e"
+    "test:all": "npm test && npm run test:e2e",
+    "build:icons": "python3 scripts/build-icons.py"
   },
   "repository": {
     "type": "git",
@@ -19,10 +20,11 @@
   },
   "homepage": "https://github.com/Drakeion2532/rylaide_ui#readme",
   "dependencies": {
-    "@fontsource/barlow": "^5.3.0",
-    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource-variable/google-sans-flex": "^5.3.2",
+    "@fontsource/roboto": "^5.3.0",
     "express": "^4.22.3",
     "maplibre-gl": "^4.7.1",
+    "material-symbols": "^0.48.0",
     "qrcode": "^1.5.4",
     "ws": "^8.22.0"
   },

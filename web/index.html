@@ -4,256 +4,47 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
   <title>Rylaide</title>
-  <meta name="description" content="Ride together: live group map, push-to-talk, navigation and safety for motorcycle riders.">
-  <meta name="theme-color" content="#1A222C">
+  <meta name="description" content="Ride together. Talk without signal. Get home safe.">
+  <meta name="theme-color" content="#faf9fd">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/icons/favicon.ico" sizes="48x48">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/symbols.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/google-sans-flex-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <!-- Splash: the two rings link up, then the signal pings once -->
-  <div id="splash" aria-hidden="true">
-    <svg class="splash-logo" viewBox="0 0 1024 1024" width="148" height="148">
+  <div class="splash" id="splash" aria-hidden="true">
+    <svg viewBox="0 0 1024 1024" width="120" height="120">
       <defs>
-        <linearGradient id="s-orange" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB13B"/><stop offset="1" stop-color="#F57C1F"/></linearGradient>
-        <linearGradient id="s-mix" gradientUnits="userSpaceOnUse" x1="430" y1="360" x2="760" y2="760"><stop offset="0" stop-color="#2FC9C3"/><stop offset=".45" stop-color="#9FBF7A"/><stop offset="1" stop-color="#F98924"/></linearGradient>
-        <linearGradient id="s-teal" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#22B8B8"/><stop offset="1" stop-color="#3FD9CF"/></linearGradient>
+        <linearGradient id="s-o" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB13B"/><stop offset="1" stop-color="#F57C1F"/></linearGradient>
+        <linearGradient id="s-m" gradientUnits="userSpaceOnUse" x1="430" y1="360" x2="760" y2="760"><stop offset="0" stop-color="#2FC9C3"/><stop offset=".45" stop-color="#9FBF7A"/><stop offset="1" stop-color="#F98924"/></linearGradient>
+        <linearGradient id="s-t" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#22B8B8"/><stop offset="1" stop-color="#3FD9CF"/></linearGradient>
       </defs>
+      <rect width="1024" height="1024" rx="230" fill="#232B36"/>
       <g transform="translate(512 528) scale(.82) translate(-533 -470)" fill="none" stroke-linecap="round">
-        <circle class="ring ring-l" cx="342" cy="560" r="195" stroke="url(#s-orange)" stroke-width="64" pathLength="100"/>
-        <path class="ring ring-r" d="M 645.9 368.0 A 195 195 0 1 0 792.8 487.0" stroke="url(#s-mix)" stroke-width="64" pathLength="100"/>
-        <circle class="sig sig0" cx="690" cy="420" r="38" fill="url(#s-teal)"/>
-        <path class="sig sig1" d="M 673.9 328.4 A 93 93 0 0 1 780.2 397.5" stroke="url(#s-teal)" stroke-width="44"/>
-        <path class="sig sig2" d="M 660.5 252.6 A 170 170 0 0 1 855.0 378.9" stroke="url(#s-teal)" stroke-width="44"/>
-        <path class="sig sig3" d="M 647.1 176.8 A 247 247 0 0 1 929.7 360.2" stroke="url(#s-teal)" stroke-width="44"/>
+        <circle class="ring" cx="342" cy="560" r="195" stroke="url(#s-o)" stroke-width="64" pathLength="100"/>
+        <path class="ring ring-r" d="M 645.9 368.0 A 195 195 0 1 0 792.8 487.0" stroke="url(#s-m)" stroke-width="64" pathLength="100"/>
+        <circle class="sig s0" cx="690" cy="420" r="38" fill="url(#s-t)"/>
+        <path class="sig s1" d="M 673.9 328.4 A 93 93 0 0 1 780.2 397.5" stroke="url(#s-t)" stroke-width="44"/>
+        <path class="sig s2" d="M 660.5 252.6 A 170 170 0 0 1 855.0 378.9" stroke="url(#s-t)" stroke-width="44"/>
+        <path class="sig s3" d="M 647.1 176.8 A 247 247 0 0 1 929.7 360.2" stroke="url(#s-t)" stroke-width="44"/>
       </g>
     </svg>
-    <div class="splash-word">Rylaide</div>
+    <div class="word display-s">Rylaide</div>
   </div>
 
-  <!-- First run -->
-  <section id="onboard" class="onboard" hidden>
-    <img src="/icons/icon-192.png" alt="" width="72" height="72" class="onboard-icon">
-    <h1>Ride together.</h1>
-    <p class="lede">See your group on the map, talk with one button, and get help fast if something goes wrong.</p>
-    <form id="onboard-form" class="stack" autocomplete="off">
-      <label class="field"><span>Your name</span>
-        <input id="ob-name" name="name" maxlength="40" required placeholder="What your group calls you" enterkeyhint="next">
-      </label>
-      <fieldset class="field"><legend>What do you ride?</legend>
-        <div class="chips" id="ob-bike" role="radiogroup">
-          <button type="button" class="chip" role="radio" aria-checked="true" data-v="motorcycle">Motorcycle</button>
-          <button type="button" class="chip" role="radio" aria-checked="false" data-v="scooter">Scooter</button>
-          <button type="button" class="chip" role="radio" aria-checked="false" data-v="sport">Sport</button>
-          <button type="button" class="chip" role="radio" aria-checked="false" data-v="cruiser">Cruiser</button>
-          <button type="button" class="chip" role="radio" aria-checked="false" data-v="adventure">Adventure</button>
-        </div>
-      </fieldset>
-      <button class="btn btn-primary btn-wide" type="submit">Start riding</button>
-      <p class="form-error" id="ob-error" role="alert"></p>
-    </form>
-  </section>
-
-  <!-- Main app -->
-  <main id="app" hidden>
-    <div id="map" aria-label="Map of your group"></div>
-    <div id="map-fallback" class="map-fallback" hidden>
-      <p>The map can’t display on this device. Riders are listed in the Group tab.</p>
-    </div>
-
-    <header class="topbar">
-      <button class="pill" id="group-pill" type="button">
-        <span class="dot" id="conn-dot" aria-hidden="true"></span>
-        <span id="group-pill-text">No group yet</span>
-      </button>
-      <div class="pill weather" id="weather" hidden></div>
-    </header>
-
-    <div class="banner" id="map-banner" role="status" hidden></div>
-
-    <!-- Turn-by-turn -->
-    <div class="nav-card" id="nav-card" hidden role="status" aria-live="polite">
-      <div class="nav-dist" id="nav-dist">–</div>
-      <div class="nav-instr" id="nav-instr">–</div>
-      <div class="nav-meta"><span id="nav-remaining"></span><button class="link" id="nav-stop" type="button">End navigation</button></div>
-    </div>
-
-    <!-- Ride HUD -->
-    <div class="hud" id="hud" hidden>
-      <div class="hud-speed"><span id="hud-speed">0</span><small>km/h</small></div>
-      <div class="hud-stat"><span id="hud-dist">0.0</span><small>km</small></div>
-      <div class="hud-stat"><span id="hud-time">0:00</span><small>time</small></div>
-    </div>
-
-    <div class="map-actions">
-      <button class="round" id="btn-locate" type="button" aria-label="Centre on me">
-        <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-      </button>
-      <button class="round" id="btn-fit" type="button" aria-label="Show whole group">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
-      </button>
-    </div>
-
-    <div class="dock">
-      <button class="sos" id="btn-sos" type="button" aria-label="SOS: hold to alert your group">
-        <span class="sos-fill" aria-hidden="true"></span><span class="sos-text">SOS</span>
-      </button>
-      <button class="ride-btn" id="btn-ride" type="button">Start ride</button>
-      <button class="ptt" id="btn-ptt" type="button" aria-label="Hold to talk to your group">
-        <svg class="ptt-arcs" viewBox="0 0 100 100" aria-hidden="true">
-          <path class="a1" d="M40 30 a24 24 0 0 1 30 30"/><path class="a2" d="M38 18 a36 36 0 0 1 44 44"/><path class="a3" d="M36 6 a48 48 0 0 1 58 58"/>
-        </svg>
-        <svg class="ptt-mic" viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span class="ptt-label" id="ptt-label">Hold to talk</span>
-      </button>
-    </div>
-
-    <nav class="tabs" aria-label="Sections">
-      <button class="tab" data-sheet="" aria-current="page"><svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 0v14m6-12v14"/></svg><span>Map</span></button>
-      <button class="tab" data-sheet="group"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg><span>Group</span></button>
-      <button class="tab" data-sheet="chat"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Z"/></svg><span>Chat</span><i class="badge" id="chat-badge" hidden></i></button>
-      <button class="tab" data-sheet="tools"><svg viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8-1.5-1.5a4 4 0 0 1-5-5L13 2Z" transform="translate(-1 0)"/><path d="M3 21l6-6"/></svg><span>Tools</span></button>
-      <button class="tab" data-sheet="you"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>You</span></button>
-    </nav>
-
-    <!-- ===== Sheets ===== -->
-    <div class="scrim" id="scrim" hidden></div>
-
-    <section class="sheet" id="sheet-group" aria-label="Group" hidden>
-      <div class="grabber" aria-hidden="true"></div>
-      <div class="sheet-body" id="group-body"></div>
-    </section>
-
-    <section class="sheet" id="sheet-chat" aria-label="Group chat" hidden>
-      <div class="grabber" aria-hidden="true"></div>
-      <div class="sheet-head"><h2 id="chat-title">Chat</h2><span class="muted small" id="typing"></span></div>
-      <ol class="chat-list" id="chat-list" aria-live="polite"></ol>
-      <form class="chat-form" id="chat-form" autocomplete="off">
-        <input id="chat-input" maxlength="1000" placeholder="Message your group" enterkeyhint="send" aria-label="Message">
-        <button class="btn btn-primary" type="submit">Send</button>
-      </form>
-    </section>
-
-    <section class="sheet" id="sheet-tools" aria-label="Tools" hidden>
-      <div class="grabber" aria-hidden="true"></div>
-      <div class="seg" role="tablist" id="tools-tabs">
-        <button role="tab" data-tool="route" aria-selected="true">Route</button>
-        <button role="tab" data-tool="check" aria-selected="false">Checklist</button>
-        <button role="tab" data-tool="fuel" aria-selected="false">Fuel</button>
-        <button role="tab" data-tool="rides" aria-selected="false">Rides</button>
-        <button role="tab" data-tool="mic" aria-selected="false">Mic test</button>
-      </div>
-      <div class="sheet-body">
-        <div class="tool" data-tool="route">
-          <form id="route-form" class="search" autocomplete="off" role="search">
-            <input id="route-q" placeholder="Where are you riding to?" aria-label="Destination" enterkeyhint="search">
-            <button class="btn" type="submit">Search</button>
-          </form>
-          <ul class="results" id="route-results"></ul>
-          <div id="route-preview"></div>
-        </div>
-        <div class="tool" data-tool="check" hidden>
-          <div class="row gap">
-            <label class="field grow"><span>Trip</span>
-              <select id="ck-trip"><option value="short">Short ride (under 50 km)</option><option value="day">Day ride</option><option value="multi">Multi-day tour</option></select>
-            </label>
-          </div>
-          <p class="muted small" id="ck-context"></p>
-          <ul class="checklist" id="ck-list"></ul>
-          <div class="row between"><span id="ck-progress" class="muted"></span><button class="link" id="ck-reset" type="button">Clear ticks</button></div>
-        </div>
-        <div class="tool" data-tool="fuel" hidden>
-          <div class="stats" id="fuel-stats"></div>
-          <div id="fuel-chart" class="chart"></div>
-          <form id="fuel-form" class="grid2" autocomplete="off">
-            <label class="field"><span>Odometer (km)</span><input name="odometer" type="number" inputmode="decimal" min="0" step="0.1" required></label>
-            <label class="field"><span>Litres</span><input name="litres" type="number" inputmode="decimal" min="0.1" step="0.01" required></label>
-            <label class="field"><span>Price per litre (₹)</span><input name="pricePerLitre" type="number" inputmode="decimal" min="0" step="0.01" required></label>
-            <label class="field"><span>Date</span><input name="date" type="date" required></label>
-            <label class="check span2"><input name="full" type="checkbox" checked> Filled to full tank</label>
-            <button class="btn btn-primary span2" type="submit">Add fill-up</button>
-            <p class="form-error span2" id="fuel-error" role="alert"></p>
-          </form>
-          <ul class="list" id="fuel-list"></ul>
-        </div>
-        <div class="tool" data-tool="rides" hidden>
-          <ul class="list" id="rides-list"></ul>
-        </div>
-        <div class="tool" data-tool="mic" hidden>
-          <p class="muted">Check your helmet headset or earphones before you ride.</p>
-          <label class="field"><span>Microphone</span><select id="mic-device"><option value="">Default microphone</option></select></label>
-          <div class="meter" aria-label="Microphone level"><div class="meter-fill" id="mic-meter"></div></div>
-          <p class="small muted" id="mic-status">Tap “Start test” and say something.</p>
-          <div class="row gap wrap">
-            <button class="btn btn-primary" id="mic-start" type="button">Start test</button>
-            <button class="btn" id="mic-record" type="button" disabled>Record 3 seconds</button>
-            <button class="btn" id="mic-play" type="button" disabled>Play it back</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="sheet" id="sheet-you" aria-label="You and settings" hidden>
-      <div class="grabber" aria-hidden="true"></div>
-      <div class="sheet-body">
-        <form id="profile-form" class="stack" autocomplete="off">
-          <h2>You</h2>
-          <label class="field"><span>Name</span><input id="pf-name" maxlength="40" required></label>
-          <label class="field"><span>Bike</span>
-            <select id="pf-bike"><option value="motorcycle">Motorcycle</option><option value="scooter">Scooter</option><option value="sport">Sport</option><option value="cruiser">Cruiser</option><option value="adventure">Adventure</option></select>
-          </label>
-          <div class="field"><span>Your colour on the map</span><div class="swatches" id="pf-colors"></div></div>
-          <button class="btn btn-primary" type="submit">Save profile</button>
-        </form>
-
-        <div class="stack">
-          <h2>Appearance</h2>
-          <div class="field"><span>Theme</span>
-            <div class="seg small-seg" id="set-theme" role="radiogroup">
-              <button role="radio" data-v="system">System</button><button role="radio" data-v="dark">Dark</button><button role="radio" data-v="light">Light</button>
-            </div>
-          </div>
-          <div class="field"><span>Accent colour</span><div class="swatches" id="set-accent"></div></div>
-          <label class="toggle"><input type="checkbox" id="set-glove"><span><b>Glove mode</b><br><small class="muted">Bigger buttons and text for riding with gloves.</small></span></label>
-          <label class="toggle"><input type="checkbox" id="set-voice" checked><span><b>Spoken directions</b><br><small class="muted">Reads turn-by-turn directions through your headset.</small></span></label>
-          <label class="toggle"><input type="checkbox" id="set-share" checked><span><b>Share my location with my group</b><br><small class="muted">Only people in your current group can see it.</small></span></label>
-        </div>
-
-        <form class="stack" id="contacts-form" autocomplete="off">
-          <h2>Emergency contacts</h2>
-          <p class="muted small">Shown with a call button when you send an SOS. Up to 5.</p>
-          <div id="contacts-rows" class="stack tight"></div>
-          <div class="row gap"><button class="btn" type="button" id="contacts-add">Add contact</button><button class="btn btn-primary" type="submit">Save contacts</button></div>
-        </form>
-
-        <div class="stack">
-          <button class="btn" id="btn-install" type="button" hidden>Install Rylaide on this phone</button>
-          <button class="link danger" id="btn-signout" type="button">Sign out of this device</button>
-          <p class="muted small">Rylaide prototype · map data © OpenStreetMap contributors, tiles by OpenFreeMap, weather by MET Norway.</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- SOS countdown / active -->
-    <div class="sos-overlay" id="sos-overlay" hidden role="alertdialog" aria-labelledby="sos-title">
-      <div class="sos-panel">
-        <h2 id="sos-title">Sending SOS in <span id="sos-count">5</span></h2>
-        <p id="sos-desc">Your group will get an alert with your location.</p>
-        <div id="sos-contacts" class="stack tight"></div>
-        <button class="btn btn-wide btn-light" id="sos-cancel" type="button">Cancel: I’m safe</button>
-      </div>
-    </div>
-
-    <!-- Incoming SOS -->
-    <div class="alert-bar" id="alert-bar" hidden role="alert"></div>
-  </main>
-
-  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div id="app">
+    <div id="stage"></div>
+    <div id="ridebar-slot"></div>
+    <nav class="navbar" id="navbar" aria-label="Main" hidden></nav>
+    <div class="snackbars" id="snackbars" aria-live="polite"></div>
+    <div id="overlays"></div>
+  </div>
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>

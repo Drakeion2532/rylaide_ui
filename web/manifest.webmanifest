@@ -1,13 +1,13 @@
 {
   "name": "Rylaide",
   "short_name": "Rylaide",
-  "description": "Ride together: live group map, push-to-talk, navigation and safety for motorcycle riders.",
+  "description": "Ride together. Talk without signal. Get home safe.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#1A222C",
-  "theme_color": "#1A222C",
+  "background_color": "#faf9fd",
+  "theme_color": "#faf9fd",
   "categories": ["navigation", "travel", "sports"],
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

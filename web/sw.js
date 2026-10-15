@@ -1,12 +1,15 @@
 // Offline shell: the app opens without signal; live features reconnect when it returns.
-const VERSION = 'rylaide-v1';
+const VERSION = 'rylaide-v2';
 const SHELL = [
   '/', '/styles.css', '/manifest.webmanifest',
-  '/js/app.js', '/js/api.js', '/js/map.js', '/js/voice.js', '/js/tools.js', '/js/util.js',
+  '/js/app.js', '/js/api.js', '/js/map.js', '/js/voice.js', '/js/util.js', '/js/ui.js', '/js/icons.js', '/js/theme.js',
+  '/js/state.js', '/js/router.js', '/js/engine.js',
+  '/js/screens/onboarding.js', '/js/screens/home.js', '/js/screens/groups.js', '/js/screens/history.js',
+  '/js/screens/garage.js', '/js/screens/setup.js', '/js/screens/ride.js',
   '/vendor/maplibre/maplibre-gl.js', '/vendor/maplibre/maplibre-gl.css',
   '/icons/icon-192.png', '/icons/favicon.svg',
-  '/fonts/barlow-latin-400-normal.woff2', '/fonts/barlow-latin-600-normal.woff2', '/fonts/barlow-latin-700-normal.woff2',
-  '/fonts/barlow-condensed-latin-600-normal.woff2', '/fonts/barlow-condensed-latin-700-normal.woff2',
+  '/fonts/symbols.woff2', '/fonts/google-sans-flex-latin-wght-normal.woff2', '/fonts/roboto-latin-400-normal.woff2', '/fonts/roboto-latin-500-normal.woff2',
+  '/img/bike-classic.jpg', '/img/bike-adventure.jpg', '/img/group-ride.jpg', '/img/ghat-road.jpg',
 ];
 const TILE_CACHE = 'rylaide-tiles';
 const TILE_MAX = 1500;

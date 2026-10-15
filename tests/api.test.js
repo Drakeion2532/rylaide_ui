@@ -59,7 +59,10 @@ test('health and static app shell', async () => {
   assert.match(html, /Rylaide/);
   assert.equal((await fetch(base + '/vendor/maplibre/maplibre-gl.js')).status, 200);
   assert.equal((await fetch(base + '/icons/icon-192.png')).status, 200);
-  assert.equal((await fetch(base + '/fonts/barlow-latin-400-normal.woff2')).status, 200);
+  assert.equal((await fetch(base + '/fonts/google-sans-flex-latin-wght-normal.woff2')).status, 200);
+  assert.equal((await fetch(base + '/fonts/roboto-latin-400-normal.woff2')).status, 200);
+  assert.equal((await fetch(base + '/fonts/symbols.woff2')).status, 200);
+  assert.equal((await fetch(base + '/img/bike-classic.jpg')).status, 200);
   assert.equal((await fetch(base + '/some/deep/link')).status, 200, 'SPA fallback');
   assert.equal((await api('GET', '/api/nope')).status, 404);
 });
@@ -76,6 +79,11 @@ test('sign up validation and profile updates', async () => {
   const p = await api('PATCH', '/api/me', { name: 'Asha K', color: '#2fc9c3', bike: 'cruiser' }, a.token);
   assert.deepEqual([p.body.user.name, p.body.user.color, p.body.user.bike], ['Asha K', '#2fc9c3', 'cruiser']);
   assert.equal(p.body.user.token, undefined, 'token never leaks in user objects');
+  assert.equal((await api('PATCH', '/api/me', { vehicle: { make: 'RE', odometer: 'lots' } }, a.token)).status, 400);
+  const v = await api('PATCH', '/api/me', { vehicle: { make: ' Royal Enfield ', model: 'Classic 350', odometer: '31220.4' } }, a.token);
+  assert.deepEqual(v.body.user.vehicle, { make: 'Royal Enfield', model: 'Classic 350', odometer: 31220 });
+  const withBike = (await api('POST', '/api/users', { name: 'Kiran', vehicle: { make: 'Bajaj', model: 'Dominar 400' } })).body;
+  assert.equal(withBike.user.vehicle.model, 'Dominar 400');
 });
 
 test('groups: create, join by code, permissions, plan, QR, leave', async () => {
@@ -120,8 +128,11 @@ test('rides: validation, distance, privacy, delete', async () => {
   const b = await signup('Ride B');
   assert.equal((await api('POST', '/api/rides', { points: [[18.5, 73.8]] }, a.token)).status, 400);
   const pts = [[18.5204, 73.8567, 0], [18.5304, 73.8567, 10], [18.5304, 73.8667, 20], ['x', 'y'], [200, 0]];
-  const r = await api('POST', '/api/rides', { name: 'Evening loop', points: pts, duration: 1200, maxSpeed: 16.6, startedAt: 1 }, a.token);
+  const r = await api('POST', '/api/rides', { name: 'Evening loop', destination: 'Sinhagad Fort', groupName: 'Weekend Riders', points: pts, duration: 1200, maxSpeed: 16.6, startedAt: 1 }, a.token);
   assert.equal(r.status, 201);
+  assert.equal(r.body.ride.destination, 'Sinhagad Fort');
+  assert.equal(r.body.ride.groupName, 'Weekend Riders');
+  assert.equal(r.body.ride.avgSpeed, +(r.body.ride.distance / 1200).toFixed(2));
   assert.equal(r.body.ride.pointCount, 3, 'bad points dropped');
   const expected = haversine(pts[0], pts[1]) + haversine(pts[1], pts[2]);
   assert.equal(r.body.ride.distance, Math.round(expected));
@@ -177,6 +188,9 @@ test('routing, search and weather proxies', async () => {
     'Head east on FC Road', 'Turn left onto Ganeshkhind Road', 'At the roundabout, take exit 2', 'Arrive at your destination',
   ]);
   assert.equal((await api('GET', '/api/route?from=0,0&to=1,1', undefined, a.token)).status, 404);
+  assert.equal(r.body.options.length, 3, 'up to three route options');
+  assert.deepEqual(r.body.options.map((o) => o.label), ['Best', 'Fastest', 'Scenic']);
+  assert.equal(r.body.options[0].steps[1].modifier, 'left');
   assert.ok(up.calls.every((c) => /Rylaide/.test(c.ua)), 'identifies itself to OSM services');
 
   assert.deepEqual((await api('GET', '/api/search?q=a', undefined, a.token)).body.results, []);

@@ -1,0 +1,16 @@
+# One-click deploy on Render (Blueprint). A persistent disk keeps accounts, groups and rides across restarts.
+services:
+  - type: web
+    name: rylaide
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATA_FILE
+        value: /data/rylaide.json
+      - key: USER_AGENT
+        sync: false   # e.g. "Rylaide/0.1 (you@example.com)" — OSM and MET Norway require a contact
+    disk:
+      name: rylaide-data
+      mountPath: /data
+      sizeGB: 1

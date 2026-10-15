@@ -1,0 +1,33 @@
+{
+  "name": "rylaide",
+  "version": "0.1.0",
+  "description": "Rylaide prototype: group riding app with live map, push-to-talk, navigation and SOS.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test tests/api.test.js",
+    "test:e2e": "bash scripts/e2e.sh",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Drakeion2532/rylaide_ui.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/Drakeion2532/rylaide_ui/issues"
+  },
+  "homepage": "https://github.com/Drakeion2532/rylaide_ui#readme",
+  "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "express": "^4.22.3",
+    "maplibre-gl": "^4.7.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.22.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

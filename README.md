@@ -1,25 +1,107 @@
-# Rylaide UI
+# Rylaide (web prototype)
 
-UI-only workspace for the Rylaide app: screens from Figma, animations and app branding, kept separate from the main app code.
+A riding companion for motorcycle groups. Install it on any phone from a link: no app store needed.
 
-## App icon ("Linked Riders", dark)
+**What riders can do**
+- Create a group, or join one with a 6-letter code, invite link or QR
+- See every rider live on the map, with heading, distance away and online status
+- Push-to-talk: hold the big button and talk; the group hears it automatically
+- Group chat, with join, leave and plan notices
+- Search a destination, see the route, and get turn-by-turn directions spoken in your headset (reroutes if you go off course)
+- Share a ride plan (destination, meet time, note) with the group
+- Record rides: live speed, distance and time; saved to ride history
+- SOS: hold 1.5 s, then a 5 s countdown you can cancel. The group gets an alert with your location, and you get call and text buttons for your emergency contacts and 112
+- Pre-ride checklist that adapts to your bike, trip length, time of day and the weather
+- Fuel log with full-tank mileage (km/l), spend and a trend chart
+- Mic test with a live level meter, record and playback
+- Light and dark themes, accent colour, glove mode (bigger buttons), spoken directions on/off
+- Works offline for the app shell and recently seen map areas; reconnects automatically
 
-The master icon is a vector redraw of the dark-background concept, so it stays sharp at every size.
+## Run it locally
+
+```bash
+npm install
+npm start                # http://localhost:3000
+```
+
+Location and microphone only work on `localhost` or HTTPS. To try it on your phone, deploy it (below) or use a tunnel such as `cloudflared tunnel --url http://localhost:3000`.
+
+## Tests
+
+```bash
+npm test                 # 11 backend tests: accounts, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm run test:e2e         # 16 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm run test:all
+```
+
+Map, routing, search and weather are faked in tests, so they run without internet.
+
+## Deploy for launch (Render, about 10 minutes)
+
+1. Push this repo to GitHub (done).
+2. On [render.com](https://render.com): **New → Blueprint** → pick `rylaide_ui`. It reads `render.yaml`.
+3. Set `USER_AGENT` to something like `Rylaide/0.1 (your-email@example.com)`. OpenStreetMap and MET Norway require a contact.
+4. Deploy. You get an `https://rylaide-xxxx.onrender.com` link: that's the link you share.
+
+The Blueprint uses the **Starter plan with a 1 GB disk** (about US$7/month + $0.25/GB) so accounts, groups and rides survive restarts. Render's free plan works too, but it wipes data on every restart and sleeps after 15 minutes, which logs everyone out. Not suitable for launch day.
+
+Any Docker host works: `docker build -t rylaide . && docker run -p 3000:3000 -v rylaide-data:/data rylaide`.
+
+### Settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Web port |
+| `DATA_FILE` | `data/rylaide.json` | Where accounts, groups, rides and fuel logs are stored |
+| `USER_AGENT` | repo URL | Sent to map services; include a contact email |
+| `OSRM_URL` | public OSRM demo | Routing server |
+| `NOMINATIM_URL` | public Nominatim | Place search |
+| `WEATHER_URL` | MET Norway | Weather |
+
+## Launch-day checklist
+
+- [ ] Deployed on HTTPS and the link opens on Android Chrome and iPhone Safari
+- [ ] **Install it:** Android → menu → *Install app*; iPhone → Share → *Add to Home Screen*. Check the Rylaide icon appears
+- [ ] Allow **location** and **microphone** when asked
+- [ ] Two phones, outdoors: create a group, join by link, and see each other move on the map
+- [ ] Push-to-talk both ways with helmet headsets; run the Mic test first
+- [ ] Hold SOS on one phone; the other gets the alert. Then cancel
+- [ ] Navigate a short known route and check the spoken directions
+- [ ] Record a short ride and check it appears in Tools → Rides
+- [ ] Add emergency contacts in **You**
+
+## Known limits of this prototype
+
+These are fine for a launch with your riding group, but worth knowing:
+
+- **Voice is push-to-talk over the internet,** not live, always-on intercom, and it needs mobile data. Offline Bluetooth intercom is in the native Android app.
+- **iPhone:** voice messages play while Rylaide is open on screen. iOS pauses web apps in the background, and location sharing pauses too.
+- **Accounts have no password.** Each phone gets its own sign-in; signing out or clearing browser data starts a new account.
+- **Free map services:** the public OSRM routing server and Nominatim search are meant for light use (about one request per second). That's fine for a riding group. For a public launch, self-host them or use a paid provider via `OSRM_URL` / `NOMINATIM_URL`.
+- **One server:** data is a single JSON file. That's good for hundreds of riders, not thousands. Move to a database (Firebase, as planned for the native app) before scaling.
+
+## App icon
+
+The "Linked Riders" logo is redrawn as a vector in `assets/brand/` and exported for every platform.
 
 | Path | Use |
 |---|---|
 | `assets/brand/rylaide-icon.svg` | Master icon (rounded dark tile) |
 | `assets/brand/rylaide-icon-square.svg` | Full-bleed square for stores and OS-masked icons |
 | `assets/brand/rylaide-icon-foreground.svg` | Rings + signal only, transparent, for adaptive icons |
-| `assets/icons/android/res/` | Drop into `android/app/src/main/res/` (legacy, round and adaptive mipmaps, background `#232B36`) |
-| `assets/icons/android/play_store_512.png` | Google Play listing icon |
-| `assets/icons/ios/AppIcon.appiconset/` | Replace `ios/Runner/Assets.xcassets/AppIcon.appiconset` (or your app's equivalent) |
-| `assets/icons/web/` | Favicons, Apple touch icon and PWA icons (192, 512, maskable 512) |
+| `assets/icons/web/` | Favicons, Apple touch icon and PWA icons (used by this web app) |
+| `assets/icons/android/res/` | Drop into `android/app/src/main/res/` of the native app |
+| `assets/icons/ios/AppIcon.appiconset/` | Drop into the iOS app's asset catalogue |
 
-### Colors
+Colours: asphalt `#232B36`, hazard orange `#F98924`, signal teal `#2FC9C3`.
 
-| Token | Hex |
-|---|---|
-| Background | `#232B36` (gradient `#3A434D` → `#1A222C`) |
-| Orange | `#FFB13B` → `#F57C1F` |
-| Teal | `#22B8B8` → `#3FD9CF` |
+## Code layout
+
+```
+server/   Express + WebSocket backend (app.js), JSON store
+web/      The app: index.html, styles.css, js/ (app, map, voice, tools, api, util), service worker
+tests/    api.test.js (node:test), e2e.py (Playwright, two riders)
+assets/   Logo and icon sets
+```
+
+Map data © OpenStreetMap contributors · tiles by OpenFreeMap · weather by MET Norway.

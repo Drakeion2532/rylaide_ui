@@ -1,5 +1,5 @@
 // 36 History → 34 Ride summary
-import { h, fmtKm, durShort, fmtDay, haversine, store } from '../util.js';
+import { h, fmtKm, durShort, fmtDay, haversine, store, shareText } from '../util.js';
 import { api } from '../api.js';
 import { ctx } from '../state.js';
 import { ic, button, iconButton, listItem, dialog, snackbar, liftOnScroll } from '../ui.js';
@@ -101,7 +101,7 @@ register('summary', (el, params) => {
       h('div', { class: 'summary-hero', style: 'background-image:url(/img/ghat-road.jpg)' },
         h('div', { class: 'top' }, iconButton('close', { label: 'Close', onclick: close }), iconButton('share', { label: 'Share ride', onclick: async () => {
           const text = `${r.destination || r.name}: ${fmtKm(r.distance)} km in ${durShort(r.duration)} on Rylaide`;
-          if (navigator.share) { try { await navigator.share({ title: 'My ride', text }); } catch { /* cancelled */ } } else { try { await navigator.clipboard.writeText(text); snackbar('Ride copied'); } catch { /* ignore */ } }
+          if ((await shareText({ title: 'My ride', text })) === 'copied') snackbar('Ride copied');
         } })),
         h('div', { class: 't' }, h('span', { class: 'label-l' }, meta), h('h1', { class: 'headline-l' }, r.destination || r.name), r.origin ? h('span', { class: 'body-l', style: 'color:var(--on-image-variant)' }, `from ${r.origin}`) : null)),
       h('div', { class: 'summary-sheet' },

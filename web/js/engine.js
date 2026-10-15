@@ -1,5 +1,5 @@
 // Ride engine: location, live group, recording, navigation, voice, SOS. Screens listen through state.on().
-import { store, haversine, distToLine, fmtDist, vibrate } from './util.js';
+import { store, haversine, distToLine, fmtDist, vibrate, native } from './util.js';
 import { api } from './api.js';
 import { ctx, rt, emit, setting } from './state.js';
 import { PushToTalk, VoicePlayer } from './voice.js';
@@ -159,7 +159,7 @@ function onPosition(p) {
 
 let lastSent = null, trailing = null;
 export function sendLoc(force) {
-  if (!ctx.pos || !ctx.group || !setting('share', true)) return;
+  if (!ctx.pos || !ctx.group || !setting('share', true) || ctx.ride?.solo) return; // solo rides stay private
   const now = Date.now();
   const moved = lastSent ? haversine([lastSent.lat, lastSent.lng], [ctx.pos.lat, ctx.pos.lng]) : Infinity;
   if (!force && lastSent && moved < 10 && now - lastSent.at < 15000) return;
@@ -250,7 +250,10 @@ window.addEventListener('online', flushUnsentRides);
 export const short = (name = '') => name.split(',')[0].trim();
 
 export function speak(text) {
-  if (!setting('speak', true) || !window.speechSynthesis) return;
+  if (!setting('speak', true)) return;
+  const A = native();
+  if (A) { try { A.speak(text); } catch { /* ignore */ } return; } // Android WebView has no speechSynthesis
+  if (!window.speechSynthesis) return;
   try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } catch { /* ignore */ }
 }
 
@@ -310,8 +313,8 @@ export function navState() {
 }
 
 let wakeLock = null;
-async function requestWakeLock() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* unsupported */ } }
-function releaseWakeLock() { wakeLock?.release().catch(() => {}); wakeLock = null; }
+async function requestWakeLock() { try { native()?.keepAwake(true); wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* unsupported */ } }
+function releaseWakeLock() { try { native()?.keepAwake(false); } catch { /* ignore */ } wakeLock?.release().catch(() => {}); wakeLock = null; }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.ride) requestWakeLock(); });
 
 // ---------------------------------------------------------------- voice

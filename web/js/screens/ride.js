@@ -1,5 +1,5 @@
 // 25r Ride hub (Map · Speed · Group) · 25 Full-screen map · 30 SOS countdown
-import { h, fmtDist, fmtKm, fmtEta, haversine, store } from '../util.js';
+import { h, fmtDist, fmtKm, fmtEta, haversine, store, vibrate } from '../util.js';
 import { ctx, onMany } from '../state.js';
 import { ic, button, iconButton, avatar, connectionStatus, segmented, rideControl, switchEl, ring, dialog, snackbar, sheet, listItem } from '../ui.js';
 import { register, push, back, tab, current } from '../router.js';
@@ -30,11 +30,11 @@ const arriveAt = (secs) => new Date(Date.now() + secs * 1000).toLocaleTimeString
 
 /** The three in-ride controls (Riders · Mic · SOS). Shared by the hub and the full-screen map. */
 function rideControls({ onRiders } = {}) {
-  const g = ctx.group;
+  const g = ctx.ride?.solo ? null : ctx.group;
   const riders = g ? rideControl({ type: 'group', icon: 'groups', label: `${engine.onlineRiders().length} ${engine.onlineRiders().length === 1 ? 'rider' : 'riders'}`, onclick: onRiders })
-    : rideControl({ type: 'group', icon: 'group_add', label: 'Solo ride', onclick: joinSheet });
+    : rideControl({ type: 'group', icon: 'person', label: 'Solo ride', onclick: () => snackbar('Solo ride: your location stays private. Start a group ride to share it.') });
   const mic = rideControl({ type: ctx.voiceOn && g ? 'mic-idle' : 'mic-off', icon: ctx.voiceOn && g ? 'mic' : 'mic_off', label: ctx.voiceOn && g ? 'Hold to talk' : 'Mic off', cls: 'mic-ctl' });
-  wirePtt(mic);
+  wirePtt(mic, () => g);
   const sos = rideControl({ type: 'sos', icon: 'SOS', label: 'SOS', hold: 1500, cls: 'sos-ctl', onHold: () => push('sos', {}, { anim: 'up' }), onclick: () => snackbar('Hold SOS for 1.5 seconds to alert your group.') });
   const el = h('div', { class: 'ride-controls' }, riders, mic, sos);
   const offs = onMany({
@@ -45,13 +45,13 @@ function rideControls({ onRiders } = {}) {
   return el;
 }
 
-function wirePtt(ctl) {
+function wirePtt(ctl, groupFor = () => ctx.group) {
   let pressing = false;
-  const reset = () => ctl.setState(ctx.voiceOn && ctx.group ? { type: 'mic-idle', label: 'Hold to talk', icon: 'mic' } : { type: 'mic-off', label: 'Mic off', icon: 'mic_off' });
+  const reset = () => ctl.setState(ctx.voiceOn && groupFor() ? { type: 'mic-idle', label: 'Hold to talk', icon: 'mic' } : { type: 'mic-off', label: 'Mic off', icon: 'mic_off' });
   const down = async (e) => {
     e.preventDefault();
     engine.player.unlock();
-    if (!ctx.group) return snackbar('Join a group to talk to your riders.');
+    if (!groupFor()) return snackbar(ctx.ride?.solo ? 'Talk works on group rides.' : 'Join a group to talk to your riders.');
     if (!ctx.voiceOn) return snackbar('Voice chat is off. Turn it on in the Group view.');
     if (pressing) return;
     pressing = true;
@@ -193,9 +193,11 @@ register('ride', (el) => {
   };
 
   const groupView = () => {
-    const g = ctx.group;
+    const g = ctx.ride?.solo ? null : ctx.group;
     if (!g) {
-      content.replaceChildren(h('div', { class: 'empty' }, ic('groups'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'Riding solo'), h('p', { class: 'body-m' }, 'Join a group to see your riders here and talk to them.'), button('Join a group', { style: 'tonal', onclick: joinSheet })));
+      content.replaceChildren(h('div', { class: 'empty' }, ic('person'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'Solo ride'),
+        h('p', { class: 'body-m' }, ctx.group ? `Your location stays private. Start a group ride to ride with ${ctx.group.name}.` : 'Join a group to see your riders here and talk to them.'),
+        ctx.group ? null : button('Join a group', { style: 'tonal', onclick: () => joinSheet({ stay: true }) })));
       return;
     }
     const riders = [...g.members].sort((a, b) => (a.id === ctx.user.id ? -1 : b.id === ctx.user.id ? 1 : (b.online - a.online)));
@@ -334,7 +336,7 @@ register('sos', (el) => {
     sent = true;
     clearInterval(t);
     const ok = engine.sendSos();
-    navigator.vibrate?.([500, 200, 500]);
+    vibrate([500, 200, 500]);
     title.textContent = ok ? 'Help on the way' : 'Call for help';
     r.replaceWith(h('span', { class: 'avatar', style: 'width:120px;height:120px;background:#ba1a1a;color:#fff' }, ic('sos', { size: 56 })));
     desc.textContent = ok ? 'Your group has your location' : ctx.group ? 'Couldn’t reach your group' : 'No group to alert';
@@ -347,7 +349,7 @@ register('sos', (el) => {
     left--;
     num.textContent = String(left);
     desc.textContent = `Alerting your group in ${left} s`;
-    navigator.vibrate?.(80);
+    vibrate(80);
     if (left <= 0) send();
   }, 1000);
   cancel.onclick = () => {

@@ -37,7 +37,18 @@ export function toast(text, { error = false, ms = 3200, action } = {}) {
   return dismiss;
 }
 
-export const vibrate = (p) => { try { navigator.vibrate?.(p); } catch { /* not supported */ } };
+/** The Android app injects window.RylaideAndroid (speech, vibration, share, keep-awake). */
+export const native = () => window.RylaideAndroid || null;
+export const vibrate = (p) => {
+  try { const A = native(); if (A) A.vibrate(JSON.stringify(Array.isArray(p) ? p : [p])); else navigator.vibrate?.(p); } catch { /* not supported */ }
+};
+/** Share sheet: Web Share → Android share → clipboard. Returns 'shared' | 'copied' | 'cancelled'. */
+export async function shareText({ title, text, url }) {
+  if (navigator.share) { try { await navigator.share({ title, text, url }); return 'shared'; } catch (e) { if (e.name === 'AbortError') return 'cancelled'; } }
+  const A = native();
+  if (A) { A.share(title || 'Rylaide', url ? `${text}: ${url}` : text); return 'shared'; }
+  try { await navigator.clipboard.writeText(url ? `${text}: ${url}` : text); return 'copied'; } catch { prompt('Copy this:', url || text); return 'copied'; }
+}
 
 export const fmtKm = (m) => (m >= 10000 ? (m / 1000).toFixed(0) : (m / 1000).toFixed(1));
 export function fmtDist(m) {

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Figma 01 Foundations: Light surface + primary -->
+    <color name="surface">#FAF9FD</color>
+    <color name="primary">#0159C7</color>
+    <color name="on_surface">#1A1C1E</color>
+    <color name="on_surface_variant">#43474E</color>
+    <color name="splash_bg">#232B36</color>
+</resources>

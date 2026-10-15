@@ -1,15 +1,18 @@
-# Rylaide (web prototype)
+# Rylaide (prototype)
 
-A riding companion for motorcycle groups. Install it on any phone from a link: no app store needed.
+A riding companion for riders and riding groups: motorcycles, scooters, EVs and bicycles. Run it as an Android app
+from Android Studio (below), or install it on any phone from a link.
 
 The UI is built from the Figma file **Rylaide** (`01 — Foundations`, `02 — Components`): Material 3 colour roles,
 Google Sans Flex + Roboto, Material Symbols Rounded, Day / Evening / Night themes, the 8 rider accents,
 Glove Mode (64 → 80 dp ride controls) and the motion rules (300 ms forward slide, 200 ms tab fade-through,
 hold-to-confirm rings on SOS and talk). Screens follow the Figma navigation map: four tabs
-(Home · Groups · History · Garage), a 5-step ride setup, the ride hub (Map · Speed · Group), full-screen map,
+(Home · Groups · History · Garage), a 5-step ride setup (how you’re riding → who’s riding → checklist → where to → route), the ride hub (Map · Speed · Group), full-screen map,
 SOS countdown and ride summary.
 
 **What riders can do**
+- Add your vehicle: type make and model (about 150 Indian motorcycles, scooters, EVs and bicycles suggested as you type) and Rylaide works out the type, or pick it. Add a photo of your own bike and it becomes the Home picture; otherwise Home shows a picture that matches your type
+- Choose **Solo ride** (with or without a pillion), **Group ride** (pick your group, see who’s ready, check your mic) or **Quick ride** (skip setup) before every ride. Solo rides keep your location private
 - Create a group, or join one with a 6-letter code, invite link or QR
 - See every rider live on the map, with heading, distance away and online status
 - Push-to-talk: hold the big button and talk; the group hears it automatically
@@ -33,11 +36,38 @@ npm start                # http://localhost:3000
 
 Location and microphone only work on `localhost` or HTTPS. To try it on your phone, deploy it (below) or use a tunnel such as `cloudflared tunnel --url http://localhost:3000`.
 
+## Run it on your Android phone (Android Studio)
+
+The `android/` folder is an Android Studio project: a native shell (WebView) around this app, with Android’s own
+speech for directions, vibration for alerts, the share sheet, the camera/gallery picker for your bike photo, and
+the screen kept on during rides. It needs no extra libraries.
+
+1. **Start the server** on your computer: `npm install && npm start` (port 3000).
+2. **Open** Android Studio → *Open* → choose the `android` folder (not the repo root). Let Gradle sync
+   (first time downloads Gradle 8.10 and the Android plugin; JDK 17 is bundled with Android Studio).
+3. **Connect your phone** with USB, with *Developer options → USB debugging* on.
+4. **Point the phone at your computer:**
+   ```bash
+   adb reverse tcp:3000 tcp:3000
+   ```
+   Now `http://localhost:3000` on the phone is your computer’s server. This matters: GPS and the mic only work on
+   `localhost` or `https`. Run it again whenever you reconnect the cable. (Emulator: same command.)
+5. **Run ▶** `app`. Allow Location and Microphone when asked.
+
+**Other servers.** Once it’s deployed (see *Deploy*), set its address in `android/gradle.properties`
+(`rylaideServerUrl=https://your-app.onrender.com`) and rebuild; then the phone needs no cable. You can also change it
+in the app: *Settings → App server*, or the connect screen that shows when the server can’t be reached.
+
+**Debugging:** with the phone connected, open `chrome://inspect` in Chrome on your computer to see the app’s console.
+
+> The Kotlin code is type-checked against the Android 34 API, but this environment can’t download the Android SDK,
+> so the first full Gradle build happens in your Android Studio. If it reports anything, send the message over.
+
 ## Tests
 
 ```bash
-npm test                 # 11 backend tests: accounts, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
-npm run test:e2e         # 14 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm test                 # 12 backend tests: accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm run test:e2e         # 15 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
 
@@ -57,7 +87,13 @@ npm run build:icons
 
 `web/img/` holds the bike, group and road photos from the Figma *Imagery library (Unsplash, free licence)*.
 They are the library's 240 px thumbnails, so the Home hero looks soft on big screens. To swap in full-size
-photos, replace the four JPEGs with the originals (same names, about 1200 px wide).
+photos, replace the JPEGs with the originals (same names, about 1200 px wide).
+
+Which picture Home shows: the rider’s own photo if they added one; otherwise the picture for their vehicle type
+(`classic`, `roadster`, `cruiser`, `adventure`, `sport`, `commuter` use the photos; `scooter`, `ev-scooter`,
+`bicycle`, `e-bike` use drawn artwork). The type comes from the catalogue in `web/js/vehicles.js`
+(make + model → type), then keyword rules, so add models there. Uploaded photos are stored in `PHOTO_DIR`
+(default: a `photos` folder next to the data file).
 
 ## Deploy for launch (Render, about 10 minutes)
 
@@ -76,6 +112,7 @@ Any Docker host works: `docker build -t rylaide . && docker run -p 3000:3000 -v 
 |---|---|---|
 | `PORT` | `3000` | Web port |
 | `DATA_FILE` | `data/rylaide.json` | Where accounts, groups, rides and fuel logs are stored |
+| `PHOTO_DIR` | `photos/` next to `DATA_FILE` | Riders' bike photos (keep it on the same persistent disk) |
 | `USER_AGENT` | repo URL | Sent to map services; include a contact email |
 | `OSRM_URL` | public OSRM demo | Routing server |
 | `NOMINATIM_URL` | public Nominatim | Place search |
@@ -113,7 +150,7 @@ The "Linked Riders" logo is redrawn as a vector in `assets/brand/` and exported 
 | `assets/brand/rylaide-icon-square.svg` | Full-bleed square for stores and OS-masked icons |
 | `assets/brand/rylaide-icon-foreground.svg` | Rings + signal only, transparent, for adaptive icons |
 | `assets/icons/web/` | Favicons, Apple touch icon and PWA icons (used by this web app) |
-| `assets/icons/android/res/` | Drop into `android/app/src/main/res/` of the native app |
+| `assets/icons/android/res/` | Android launcher icons (already copied into `android/app/src/main/res/`) |
 | `assets/icons/ios/AppIcon.appiconset/` | Drop into the iOS app's asset catalogue |
 
 Colours: asphalt `#232B36`, hazard orange `#F98924`, signal teal `#2FC9C3`.
@@ -125,6 +162,8 @@ server/   Express + WebSocket backend (app.js), JSON store
 web/      The app: index.html, styles.css (Figma tokens + components), service worker
 web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), ui (components), theme, map, voice
 web/js/screens/  onboarding, home, groups, history (+ summary), garage (+ fuel, settings, contacts, mic test), setup, ride
+web/js/vehicles.js  vehicle catalogue, type detection, Home picture · bikeform.js  the bike form
+android/  Android Studio project: MainActivity (WebView), RylaideBridge (speech, vibration, share, keep awake)
 tests/    api.test.js (node:test), e2e.py (Playwright, two riders)
 assets/   Logo and icon sets
 ```

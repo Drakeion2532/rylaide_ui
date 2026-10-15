@@ -2,7 +2,8 @@
 import { h } from '../util.js';
 import { api } from '../api.js';
 import { ctx } from '../state.js';
-import { ic, button, field, withLoading, iconButton } from '../ui.js';
+import { ic, button, field, withLoading, iconButton, snackbar } from '../ui.js';
+import { bikeForm } from '../bikeform.js';
 import { register, push, back } from '../router.js';
 import { getMic } from '../voice.js';
 
@@ -37,9 +38,7 @@ register('welcome', (el) => {
 
 register('profile', (el) => {
   const name = field({ label: 'Your name', attrs: { maxlength: 40, autocomplete: 'given-name', enterkeyhint: 'next' }, support: 'What your group calls you' });
-  const make = field({ label: 'Bike make', attrs: { maxlength: 30, placeholder: ' ' }, support: 'For example Royal Enfield' });
-  const model = field({ label: 'Model', attrs: { maxlength: 40 }, support: 'For example Classic 350' });
-  const odo = field({ label: 'Odometer (km)', type: 'number', attrs: { inputmode: 'numeric', min: 0 }, support: 'Optional. Used for your fuel log.' });
+  const bike = bikeForm({});
   const go = button('Continue', { size: 'large', wide: true, type: 'submit' });
   const form = h('form', { class: 'stack gap16', novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
@@ -47,18 +46,19 @@ register('profile', (el) => {
     if (!name.input.value.trim()) { name.setError('Enter your name so your group knows who you are.'); name.input.focus(); return; }
     await withLoading(go, async () => {
       try {
-        const vehicle = (make.input.value || model.input.value) ? { make: make.input.value, model: model.input.value, odometer: odo.input.value } : null;
-        const r = await api.post('/api/users', { name: name.input.value, bike: 'motorcycle', vehicle });
+        const v = bike.value();
+        const r = await api.post('/api/users', { name: name.input.value, bike: v.type || 'motorcycle', vehicle: v.make || v.model || v.type ? v : null });
         api.setToken(r.token);
         ctx.user = r.user;
+        if (bike.photo()) { try { ctx.user = (await api.post('/api/me/photo', { data: bike.photo() })).user; } catch (err) { snackbar(err.message); } }
         push('permissions', {}, { replace: true });
       } catch (err) { name.setError(err.message); }
     });
-  } }, name, h('h2', { class: 'title-m mt8' }, 'Your bike'), make, model, odo, h('div', { class: 'mt8' }, go));
+  } }, name, h('h2', { class: 'title-m mt8' }, 'What do you ride?'), bike.el, h('div', { class: 'mt8' }, go));
   el.append(
     h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back })),
     h('div', { class: 'screen-body pad' }, h('h1', { class: 'headline-m', style: 'margin:8px 0 4px' }, 'Set up Rylaide'),
-      h('p', { class: 'body-m variant', style: 'margin-bottom:24px' }, 'No password needed. Your riding data stays on your account.'), form));
+      h('p', { class: 'body-m variant', style: 'margin-bottom:24px' }, 'No password needed. Add your bike so Home shows your ride.'), form));
   setTimeout(() => name.input.focus(), 350);
 });
 

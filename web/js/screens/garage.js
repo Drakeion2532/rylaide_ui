@@ -1,29 +1,27 @@
 // 12 Garage → 11d Fuel log · 43 Settings → Appearance, Riding, Emergency contacts, Mic test
-import { h, fmtInt, store, localDate } from '../util.js';
+import { h, fmtInt, store, localDate, native } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, emit, setting, setSetting, onMany } from '../state.js';
 import { ACCENTS, applyTheme, currentLight } from '../theme.js';
 import { ic, button, iconButton, listItem, switchEl, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll } from '../ui.js';
 import { register, push, back } from '../router.js';
 import { MicTest, listMics } from '../voice.js';
-import { bikeImage } from './home.js';
+import { bikeForm, saveBike } from '../bikeform.js';
+import { heroImage, TYPES, vehicleType } from '../vehicles.js';
 
 export function editBikeSheet() {
   sheet((close) => {
-    const v = ctx.user.vehicle || {};
-    const make = field({ label: 'Make', value: v.make || '', attrs: { maxlength: 30 }, onSurface: true });
-    const model = field({ label: 'Model', value: v.model || '', attrs: { maxlength: 40 }, onSurface: true });
-    const odo = field({ label: 'Odometer (km)', type: 'number', value: v.odometer ?? '', attrs: { inputmode: 'numeric', min: 0 }, onSurface: true });
+    const form = bikeForm({ vehicle: ctx.user.vehicle || {}, onSurface: true });
     const go = button('Save bike', { size: 'large', wide: true, type: 'submit' });
     return h('form', { class: 'stack gap16', onsubmit: async (e) => {
       e.preventDefault();
       await withLoading(go, async () => {
         try {
-          ctx.user = (await api.patch('/api/me', { vehicle: { make: make.input.value, model: model.input.value, odometer: odo.input.value } })).user;
+          ctx.user = await saveBike(api, form);
           store.set('user', ctx.user); emit('user', ctx.user); close(); snackbar('Bike saved');
-        } catch (err) { odo.setError(err.message); }
+        } catch (err) { form.setError(err.message); }
       });
-    } }, h('h2', { class: 'headline-s' }, 'Your bike'), make, model, odo, go);
+    } }, h('h2', { class: 'headline-s' }, 'Your bike'), form.el, go);
   });
 }
 
@@ -36,10 +34,10 @@ register('garage', (el) => {
     const v = ctx.user?.vehicle || {};
     const parked = store.get('parking', null);
     body.replaceChildren(
-      h('section', { class: 'hero', style: `min-height:260px;max-height:300px;background-image:url(${bikeImage(v)})` },
+      h('section', { class: 'hero', style: `min-height:260px;max-height:300px;background-image:url("${heroImage(v)}")` },
         h('span', { class: 'tag-glass label-m' }, ic('two_wheeler'), 'My ride'),
         iconButton('edit', { label: 'Edit bike', style: 'glass', small: true, onclick: editBikeSheet, attrs: { class: 'icon-btn glass small swap' } }),
-        h('div', { class: 'info' }, h('div', {}, h('div', { class: 'title-s make' }, v.make || 'Add your bike'), h('div', { class: 'headline-l' }, v.model || 'Tap edit to add it')),
+        h('div', { class: 'info' }, h('div', {}, h('div', { class: 'title-s make' }, [v.make, TYPES[vehicleType(v)].label].filter(Boolean).join(' · ') || 'Add your bike'), h('div', { class: 'headline-l' }, v.model || 'Tap edit to add it')),
           h('div', { class: 'stats' }, h('div', {}, h('div', { class: 'v' }, h('span', { class: 'title-l' }, v.odometer ? fmtInt(v.odometer) : '–'), h('span', { class: 'title-s l' }, 'km')), h('div', { class: 'label-m l' }, 'Odometer'))))),
       h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Your bike'),
       h('div', { class: 'list' },
@@ -140,7 +138,7 @@ register('settings', (el) => {
         e.preventDefault();
         try { ctx.user = (await api.patch('/api/me', { name: name.input.value })).user; store.set('user', ctx.user); emit('user', ctx.user); snackbar('Name saved'); } catch (err) { name.setError(err.message); }
       } }, h('div', { class: 'grow' }, name), button('Save', { style: 'tonal', type: 'submit' })),
-      h('div', { class: 'list mt8' }, listItem({ icon: 'two_wheeler', title: 'Your bike', sub: [u.vehicle?.make, u.vehicle?.model].filter(Boolean).join(' ') || 'Not added', trail: ic('chevron_right'), onclick: editBikeSheet })),
+      h('div', { class: 'list mt8' }, listItem({ icon: TYPES[vehicleType(u.vehicle)].icon, title: 'Your bike', sub: [u.vehicle?.make, u.vehicle?.model].filter(Boolean).join(' ') || 'Not added', trail: ic('chevron_right'), onclick: editBikeSheet })),
 
       h('div', { class: 'section-title title-s' }, 'Appearance'),
       themeSeg,
@@ -165,6 +163,7 @@ register('settings', (el) => {
         listItem({ icon: 'mic', title: 'Mic test', sub: 'Check your headset', trail: ic('chevron_right'), onclick: () => push('mictest') })),
 
       h('div', { class: 'section-title title-s' }, 'About'),
+      native() ? h('div', { class: 'list', style: 'margin-bottom:12px' }, listItem({ icon: 'dns', title: 'App server', sub: (() => { try { return native().serverUrl(); } catch { return location.origin; } })(), trail: ic('chevron_right'), onclick: () => native().openServerSettings() })) : null,
       h('p', { class: 'body-s variant', style: 'padding:0 4px' }, 'Rylaide prototype. Map data © OpenStreetMap contributors, tiles by OpenFreeMap, weather by MET Norway.'),
       h('div', { class: 'mt16', style: 'padding-bottom:32px' }, button('Sign out of this phone', { style: 'danger-outlined', wide: true, icon: 'logout', onclick: async () => {
         if (!(await dialog({ title: 'Sign out?', body: 'This prototype has no passwords, so you can’t sign back in to this account. You’ll start fresh.', confirm: 'Sign out', danger: true }))) return;

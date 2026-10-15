@@ -1,12 +1,12 @@
 // 38 My groups → G01 Group space (Chat · Riders · Invite)
-import { h, fmtDist, haversine, fmtTime } from '../util.js';
+import { h, fmtDist, haversine, fmtTime, shareText } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, on, onMany } from '../state.js';
 import { ic, button, iconButton, listItem, avatar, avatarStack, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll } from '../ui.js';
 import { register, push, back } from '../router.js';
 import * as engine from '../engine.js';
 
-function newGroupSheet() {
+export function newGroupSheet({ stay } = {}) {
   sheet((close) => {
     const name = field({ label: 'Group name', attrs: { maxlength: 40 }, support: 'For example Weekend Riders', onSurface: true });
     const go = button('Create group', { size: 'large', wide: true, type: 'submit' });
@@ -15,12 +15,12 @@ function newGroupSheet() {
       e.preventDefault();
       if (!name.input.value.trim()) return name.setError('Give the group a name.');
       await withLoading(go, async () => {
-        try { const g = await engine.createGroup(name.input.value); close(); push('group', { id: g.id, tab: 'invite' }); snackbar('Group created. Invite your riders.'); } catch (err) { name.setError(err.message); }
+        try { const g = await engine.createGroup(name.input.value); close(); if (!stay) push('group', { id: g.id, tab: 'invite' }); snackbar(`${g.name} created. Share code ${g.code} with your riders.`); } catch (err) { name.setError(err.message); }
       });
     } }, h('h2', { class: 'headline-s' }, 'New group'), name, go);
   });
 }
-export function joinSheet() {
+export function joinSheet({ stay } = {}) {
   sheet((close) => {
     const code = field({ label: 'Group code', attrs: { maxlength: 9, autocapitalize: 'characters', style: 'text-transform:uppercase;letter-spacing:4px' }, support: '6 letters, from your group leader', onSurface: true });
     const go = button('Join group', { size: 'large', wide: true, type: 'submit' });
@@ -28,30 +28,30 @@ export function joinSheet() {
     return h('form', { class: 'stack gap16', onsubmit: async (e) => {
       e.preventDefault();
       await withLoading(go, async () => {
-        try { const g = await engine.joinGroup(code.input.value); close(); snackbar(`You joined ${g.name}`); push('group', { id: g.id }); } catch (err) { code.setError(err.message); }
+        try { const g = await engine.joinGroup(code.input.value); close(); snackbar(`You joined ${g.name}`); if (!stay) push('group', { id: g.id }); } catch (err) { code.setError(err.message); }
       });
     } }, h('h2', { class: 'headline-s' }, 'Join a group'), code, go);
   });
 }
 
 register('groups', (el) => {
-  const bar = h('header', { class: 'topbar' }, h('h1', { class: 'title title-l', style: 'padding-left:12px' }, 'Groups'), iconButton('qr_code_scanner', { label: 'Join with a code', onclick: joinSheet }));
+  const bar = h('header', { class: 'topbar' }, h('h1', { class: 'title title-l', style: 'padding-left:12px' }, 'Groups'), iconButton('qr_code_scanner', { label: 'Join with a code', onclick: () => joinSheet() }));
   const body = h('div', { class: 'screen-body pad' });
-  const fab = h('button', { type: 'button', class: 'fab', style: 'position:absolute;right:16px;bottom:16px;z-index:5', onclick: newGroupSheet }, ic('add'), 'New group');
+  const fab = h('button', { type: 'button', class: 'fab', style: 'position:absolute;right:16px;bottom:16px;z-index:5', onclick: () => newGroupSheet() }, ic('add'), 'New group');
   el.append(bar, body, fab);
   liftOnScroll(bar, body);
   const render = () => {
     if (!ctx.groups.length) {
       body.replaceChildren(h('div', { class: 'empty' }, ic('groups'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'No groups yet'),
         h('p', { class: 'body-m' }, 'Start a group and share the code, or join one with a code from your leader.'),
-        h('div', { class: 'row gap8' }, button('Join with a code', { style: 'outlined', onclick: joinSheet }), button('New group', { onclick: newGroupSheet }))));
+        h('div', { class: 'row gap8' }, button('Join with a code', { style: 'outlined', onclick: () => joinSheet() }), button('New group', { onclick: () => newGroupSheet() }))));
       return;
     }
     body.replaceChildren(h('div', { class: 'list', style: 'margin-top:8px' }, ctx.groups.map((g) => listItem({
       title: g.name, sub: `${g.members.length} ${g.members.length === 1 ? 'rider' : 'riders'}${g.id === ctx.group?.id ? ' · Current' : ''}`,
       trail: h('span', { class: 'row gap8' }, avatarStack(g.members.map((m) => m.name), 3), ic('chevron_right')),
       onclick: () => { engine.openGroup(g); push('group', { id: g.id }); },
-    }))), h('button', { type: 'button', class: 'shortcut', onclick: joinSheet }, ic('group_add'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Join with a code'), h('span', { class: 'body-s variant' }, 'Or open an invite link from your group')), ic('chevron_right')), h('div', { style: 'height:80px' }));
+    }))), h('button', { type: 'button', class: 'shortcut', onclick: () => joinSheet() }, ic('group_add'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Join with a code'), h('span', { class: 'body-s variant' }, 'Or open an invite link from your group')), ic('chevron_right')), h('div', { style: 'height:80px' }));
   };
   render();
   return onMany({ groups: render, group: render });
@@ -127,8 +127,7 @@ register('group', (el, params) => {
     fetch(`/api/groups/${g.id}/qr.svg`, { headers: { authorization: `Bearer ${api.token}` } }).then((r) => (r.ok ? r.blob() : null)).then((b) => { if (b) qr.src = URL.createObjectURL(b); }).catch(() => {});
     const share = async () => {
       const text = `Ride with me on Rylaide. Join “${g.name}” with code ${g.code}`;
-      if (navigator.share) { try { await navigator.share({ title: 'Join my ride', text, url }); return; } catch (e) { if (e.name === 'AbortError') return; } }
-      try { await navigator.clipboard.writeText(`${text}: ${url}`); snackbar('Invite link copied'); } catch { prompt('Copy this invite:', url); }
+      if ((await shareText({ title: 'Join my ride', text, url })) === 'copied') snackbar('Invite link copied');
     };
     content.replaceChildren(h('div', { class: 'stack gap16', style: 'align-items:center;text-align:center;padding:16px 16px 32px' },
       qr,

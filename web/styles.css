@@ -602,3 +602,39 @@ h1, h2, h3, p { margin: 0; }
   .ride-control.holding .ctl .hold-ring circle { transition-duration: var(--hold, 1500ms) !important; }
   .sos-screen .ring .bar { transition-duration: 1s !important; }
 }
+
+/* bike form preview: the same crop the Home hero uses */
+.bike-preview { height: 180px; border-radius: var(--shape-xl); background: #2a2b2e center / cover no-repeat; position: relative; overflow: hidden; transition: background-image 200ms; }
+.bike-preview::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,.45)); }
+.bike-preview.own { box-shadow: inset 0 0 0 2px var(--primary); }
+
+/* ride-type choice cards (13 Start a ride) */
+.choice { position: relative; display: flex; align-items: center; gap: 16px; width: 100%; min-height: 96px; padding: 16px; border-radius: var(--shape-xl); border: 1px solid var(--outline-variant); background: var(--surface-container-low); color: inherit; text-align: left; overflow: hidden; transition: transform var(--t-press) var(--ease-std), background-color var(--t-state), border-color var(--t-state); }
+.choice::after { content: ''; position: absolute; inset: 0; background: currentColor; opacity: 0; transition: opacity var(--t-press); border-radius: inherit; }
+.choice:hover::after { opacity: .06; } .choice:active::after { opacity: .1; }
+.choice:active { transform: scale(.985); }
+.choice .art { width: 64px; height: 64px; border-radius: var(--shape-l); display: grid; place-items: center; background: var(--primary-container); color: var(--on-primary-container); flex: none; }
+.choice .art .ms { --size: 32px; }
+.choice .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.choice.on { border: 2px solid var(--primary); background: var(--primary-container); padding: 15px; }
+.choice.on .art { background: var(--primary); color: var(--on-primary); }
+.choice.photo { min-height: 132px; color: var(--on-image); border: 0; background: #333 center / cover; }
+.choice.photo::before { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,.72), rgba(0,0,0,.15)); }
+.choice.photo > * { position: relative; z-index: 1; }
+.choice.photo .art { background: rgba(255,255,255,.18); color: #fff; backdrop-filter: blur(6px); }
+.choice.photo .variant { color: var(--on-image-variant); }
+.choice-list { display: flex; flex-direction: column; gap: 12px; }
+.choice-list > * { animation: rise 300ms var(--ease-decel) both; }
+.choice-list > *:nth-child(2) { animation-delay: 50ms; } .choice-list > *:nth-child(3) { animation-delay: 100ms; }
+
+/* step-to-step slides inside the ride setup */
+.step-in-fwd { animation: stepInFwd var(--t-forward) var(--ease-decel) both; }
+.step-in-back { animation: stepInBack var(--t-forward) var(--ease-decel) both; }
+.step-out-fwd { animation: stepOutFwd 200ms var(--ease-accel) both; }
+.step-out-back { animation: stepOutBack 200ms var(--ease-accel) both; }
+@keyframes stepInFwd { from { transform: translateX(28%); opacity: 0; } }
+@keyframes stepInBack { from { transform: translateX(-28%); opacity: 0; } }
+@keyframes stepOutFwd { to { transform: translateX(-20%); opacity: 0; } }
+@keyframes stepOutBack { to { transform: translateX(20%); opacity: 0; } }
+.mini-meter { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--shape-l); background: var(--surface-container); }
+.mini-meter .progress-linear { flex: 1; height: 8px; border-radius: 4px; }

@@ -9,6 +9,7 @@ BASE = os.environ.get('BASE', 'http://localhost:3100')
 SHOTS = os.environ.get('SHOTS', '')
 ARGS = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required',
         '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist']
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUNE = {'latitude': 18.5204, 'longitude': 73.8567}
 results, page_errors, pages = [], [], []
 TOP = '#stage > .screen:last-child'   # the screen currently on top
@@ -29,6 +30,7 @@ async def step(name, coro):
 
 async def shot(page, name):
     if SHOTS:
+        await page.wait_for_timeout(450)  # let slides and colour fades finish
         await page.screenshot(path=os.path.join(SHOTS, f'{name}.png'))
 
 
@@ -66,9 +68,9 @@ async def rider(browser, name, make, model, geo, url='/', theme='light'):
     await tap(page, 'text=Skip')
     await expect(page.locator('[data-screen=profile]')).to_be_visible()
     await page.fill(f'{TOP} form input >> nth=0', name)
-    await page.fill(f'{TOP} form input >> nth=1', make)
-    await page.fill(f'{TOP} form input >> nth=2', model)
-    await page.fill(f'{TOP} form input >> nth=3', '31220')
+    await page.fill(f'{TOP} input[name=make]', make)
+    await page.fill(f'{TOP} input[name=model]', model)
+    await page.fill(f'{TOP} input[name=odometer]', '31220')
     await tap(page, f'{TOP} button[type=submit]')
     await expect(page.locator('[data-screen=permissions]')).to_be_visible()
     await tap(page, f'{TOP} .screen-foot .btn')
@@ -133,6 +135,20 @@ async def main():
             await tap(B, '.nav-item[data-tab=home]')
         await step('Second rider joins by invite link; wrong code explained', join())
 
+        async def bike_photo():
+            await tap(B, '[data-screen=home] .hero [aria-label="Add a photo of your bike"]')
+            await expect(B.locator('.sheet input[name=model]')).to_have_value('Adventure 390')
+            await expect(B.locator('.sheet select[name=type]')).to_have_value('adventure')
+            await B.locator('.sheet input[type=file]').set_input_files(os.path.join(ROOT, 'web/img/bike-sport.jpg'))
+            await expect(B.locator('.sheet .bike-preview')).to_have_attribute('style', re.compile('data:image/jpeg'), timeout=5000)
+            await tap(B, '.sheet button[type=submit]')
+            await expect(B.locator('[data-screen=home] .hero')).to_have_attribute('style', re.compile(r'/photos/[\w-]+\.jpg'), timeout=6000)
+            src = await B.evaluate("window.__rylaide.ctx.user.vehicle.photo")
+            r = await B.request.get(f'{BASE}/photos/{src}.jpg')
+            assert r.status == 200 and r.headers['content-type'].startswith('image/jpeg')
+            await shot(B, '03-own-bike-photo')
+        await step('Owner bike photo: add from Home, shown as the Home hero', bike_photo())
+
         async def chat():
             await tap(A, f'{TOP} [role=tab][data-value=chat]')
             await tap(B, '.bento .card >> nth=1')
@@ -160,17 +176,34 @@ async def main():
 
         async def setup_flow():
             await tap(A, '.hero .btn')
-            await expect(A.locator('[data-screen=setup] .step-caption')).to_have_text('Step 1 of 5 · Where to')
-            await A.fill('.search-bar input', 'nowhere')
-            await expect(A.locator('[data-screen=setup] .empty')).to_contain_text('Nothing found', timeout=5000)
-            await A.fill('.search-bar input', 'Sinhagad')
-            await expect(A.locator('[data-screen=setup] .list-item').nth(1)).to_contain_text('Sinhagad', timeout=5000)
-            await tap(A, '[data-screen=setup] .list-item.tappable >> nth=1')
+            await expect(A.locator('[data-screen=setup] .step-caption')).to_have_text('Step 1 of 5 · How you’re riding')
+            await expect(A.locator('[data-mode]')).to_have_count(3)
+            await expect(A.locator('[data-mode=solo]')).to_have_attribute('style', re.compile('bike-classic'))
+            await expect(A.locator('[data-mode=quick]')).to_contain_text('Weekend Riders')
+            await shot(A, '04-ride-type')
+            # solo path: pillion adds checklist items, back returns to the choice
+            await tap(A, '[data-mode=solo]')
+            await expect(A.locator('.step-caption')).to_have_text('Step 2 of 5 · Who’s riding')
+            await tap(A, '[data-pillion=yes]')
+            await expect(A.locator('.step-caption')).to_have_text('Step 3 of 5 · Checklist')
+            await expect(A.locator('[data-screen=setup]')).to_contain_text('pillion', ignore_case=True)
+            await A.wait_for_timeout(350)
+            await tap(A, '.setup-head [aria-label=Back]')
+            await expect(A.locator('.step-caption')).to_have_text('Step 2 of 5 · Who’s riding')
+            await A.wait_for_timeout(350)
+            await tap(A, '.setup-head [aria-label=Back]')
+            await expect(A.locator('.step-caption')).to_have_text('Step 1 of 5 · How you’re riding')
+            await A.wait_for_timeout(350)
+            # group path
+            await tap(A, '[data-mode=group]')
             await expect(A.locator('.step-caption')).to_have_text('Step 2 of 5 · Who’s riding')
             await expect(A.locator('.rider-row.selected')).to_contain_text('Weekend Riders')
-            await tap(A, 'text=Continue')
+            await expect(A.locator('[data-screen=setup] .mini-meter')).to_be_visible()
+            await expect(A.locator('[data-screen=setup]')).to_contain_text('2 of 2 ready')
+            await shot(A, '04b-group-ready')
+            await tap(A, '[data-screen=setup] [data-step="2"] .screen-foot .btn')
             await expect(A.locator('.step-caption')).to_have_text('Step 3 of 5 · Checklist')
-            ready = A.locator('[data-screen=setup] .screen-foot .btn.filled')
+            ready = A.locator('[data-screen=setup] [data-step="3"] .screen-foot .btn.filled')
             await expect(ready).to_be_disabled()
             n = await A.locator('.check-item.req').count()
             assert n >= 9, f'expected required items, got {n}'
@@ -179,11 +212,15 @@ async def main():
             await expect(A.locator('.check-hero')).to_contain_text('All required items done')
             await expect(ready).to_be_enabled()
             await shot(A, '05-checklist')
-            await tap(A, '[data-screen=setup] .screen-foot .btn.filled')
-            await expect(A.locator('.step-caption')).to_have_text('Step 4 of 5 · Mic check')
-            await expect(A.locator('[data-screen=setup] [role=status]')).to_contain_text(re.compile('Listening|hear you'), timeout=6000)
-            await tap(A, 'text=Sounds good')
+            await tap(A, '[data-screen=setup] [data-step="3"] .screen-foot .btn.filled')
+            await expect(A.locator('.step-caption')).to_have_text('Step 4 of 5 · Where to')
+            await A.fill('.search-bar input', 'nowhere')
+            await expect(A.locator('[data-screen=setup] [data-step="4"] .empty')).to_contain_text('Nothing found', timeout=5000)
+            await A.fill('.search-bar input', 'Sinhagad')
+            await expect(A.locator('[data-screen=setup] [data-step="4"] .list-item').nth(1)).to_contain_text('Sinhagad', timeout=5000)
+            await tap(A, '[data-screen=setup] [data-step="4"] .list-item.tappable >> nth=1')
             await expect(A.locator('.route-opt')).to_have_count(3, timeout=8000)
+            await expect(A.locator('.route-sheet')).to_contain_text('Step 5 of 5 · Route · Group ride')
             await expect(A.locator('.route-opt >> nth=0')).to_contain_text('Best')
             await expect(A.locator('.route-opt >> nth=1')).to_contain_text('Fastest')
             await expect(A.locator('.route-opt >> nth=2')).to_contain_text('Scenic')
@@ -196,7 +233,7 @@ async def main():
             await expect(A.locator('.maneuver')).to_contain_text('Ganeshkhind Road')
             await expect(A.locator('.trip-strip')).to_contain_text('km left')
             await expect(B.locator('.bento')).to_contain_text('Weekend Riders')
-        await step('Ride setup: search, who, checklist gates Ready, mic check, 3 routes, start', setup_flow())
+        await step('Ride setup: solo/group choice, pillion, ready riders + mic, checklist gates Ready, where to, 3 routes, start', setup_flow())
 
         async def hub_views():
             await expect(A.locator('.hub-top .timer')).to_contain_text(re.compile(r'00:0\d:\d\d'))
@@ -231,7 +268,7 @@ async def main():
 
         async def sos():
             await tap(B, '.hero .btn')
-            await tap(B, 'text=Just ride')
+            await tap(B, '[data-mode=quick]')
             await expect(B.locator('[data-screen=ride]')).to_be_visible()
             await tap(B, '.sos-ctl')
             await expect(B.locator('.snackbar').last).to_contain_text('Hold SOS')
@@ -307,7 +344,7 @@ async def main():
             await expect(A.locator('[data-screen=home]')).to_be_visible(timeout=8000)
             assert await A.evaluate("document.documentElement.classList.contains('glove') && document.documentElement.dataset.light === 'night'")
             await tap(A, '[data-screen=home] .hero .btn')
-            await tap(A, 'text=Just ride')
+            await tap(A, '[data-mode=quick]')
             await A.wait_for_timeout(450)
             w = await A.evaluate("document.querySelector('.ride-control .ctl').getBoundingClientRect().width")
             assert w >= 79, f'glove mode ride controls should be 80 dp, got {w}'
@@ -318,7 +355,7 @@ async def main():
 
         async def offline():
             await tap(B, '[data-screen=home] .hero .btn') if await B.locator('[data-screen=home]').is_visible() else None
-            await tap(B, 'text=Just ride')
+            await tap(B, '[data-mode=quick]')
             await ctxB.set_offline(True)
             await B.evaluate("window.__rylaide.rt.ws && window.__rylaide.rt.ws.close()")
             await expect(B.locator('.hub-chips .status').first).to_have_attribute('data-state', re.compile('reconnecting|disconnected'), timeout=6000)

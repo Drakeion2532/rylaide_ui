@@ -81,7 +81,7 @@ test('sign up validation and profile updates', async () => {
   assert.equal(p.body.user.token, undefined, 'token never leaks in user objects');
   assert.equal((await api('PATCH', '/api/me', { vehicle: { make: 'RE', odometer: 'lots' } }, a.token)).status, 400);
   const v = await api('PATCH', '/api/me', { vehicle: { make: ' Royal Enfield ', model: 'Classic 350', odometer: '31220.4' } }, a.token);
-  assert.deepEqual(v.body.user.vehicle, { make: 'Royal Enfield', model: 'Classic 350', odometer: 31220 });
+  assert.deepEqual(v.body.user.vehicle, { type: null, make: 'Royal Enfield', model: 'Classic 350', odometer: 31220, photo: null });
   const withBike = (await api('POST', '/api/users', { name: 'Kiran', vehicle: { make: 'Bajaj', model: 'Dominar 400' } })).body;
   assert.equal(withBike.user.vehicle.model, 'Dominar 400');
 });
@@ -318,4 +318,49 @@ test('data survives a restart and corrupt files are set aside', async () => {
   assert.equal(s3.store.data.users.length, 0);
   assert.ok(fs.readdirSync(path.dirname(file)).some((f) => f.includes('corrupt')));
   await s3.close();
+});
+
+test('bike: type, make and model, owner photo upload, serve, replace, delete', async () => {
+  const r = await api('POST', '/api/users', { name: 'Owner', vehicle: { type: 'ev-scooter', make: 'Ather', model: '450X', odometer: 1200 } });
+  assert.ok(r.status < 300, `signup ${r.status}`);
+  const tok = r.body.token;
+  assert.deepEqual(r.body.user.vehicle, { type: 'ev-scooter', make: 'Ather', model: '450X', odometer: 1200, photo: null });
+  // unknown type is dropped, not trusted
+  assert.equal((await api('PATCH', '/api/me', { vehicle: { type: 'tank', make: 'X' } }, tok)).body.user.vehicle.type, null);
+  assert.equal((await api('PATCH', '/api/me', { vehicle: { type: 'bicycle', make: 'Hercules', model: 'Roadeo' } }, tok)).status, 200);
+  assert.equal((await api('PATCH', '/api/me', { vehicle: { odometer: -4 } }, tok)).status, 400);
+
+  // photos: JPEG only, size limits, signed in only
+  assert.equal((await api('POST', '/api/me/photo', { data: Buffer.from('not a jpeg'.repeat(200)).toString('base64') }, tok)).status, 400);
+  assert.equal((await api('POST', '/api/me/photo', {}, tok)).status, 400);
+  assert.equal((await api('POST', '/api/me/photo', { data: 'x' })).status, 401);
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(4000, 7), Buffer.from([0xff, 0xd9])]);
+  const up1 = await api('POST', '/api/me/photo', { data: `data:image/jpeg;base64,${jpeg.toString('base64')}` }, tok);
+  assert.equal(up1.status, 200);
+  const pid = up1.body.user.vehicle.photo;
+  assert.match(pid, /^[\w-]{8,20}$/);
+  assert.equal(up1.body.user.vehicle.make, 'Hercules', 'photo keeps the bike details');
+  const img = await fetch(`${base}/photos/${pid}.jpg`);
+  assert.equal(img.status, 200);
+  assert.match(img.headers.get('content-type'), /jpeg/);
+  assert.equal(Buffer.from(await img.arrayBuffer()).length, jpeg.length);
+
+  // editing the bike keeps the photo
+  const ed = await api('PATCH', '/api/me', { vehicle: { type: 'e-bike', make: 'Hero Lectro', model: 'C5x' } }, tok);
+  assert.equal(ed.body.user.vehicle.photo, pid);
+  assert.equal(ed.body.user.vehicle.type, 'e-bike');
+
+  // replacing removes the old file
+  const pid2 = (await api('POST', '/api/me/photo', { data: jpeg.toString('base64') }, tok)).body.user.vehicle.photo;
+  assert.notEqual(pid2, pid);
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal((await fetch(`${base}/photos/${pid}.jpg`)).status, 404);
+
+  assert.equal((await api('DELETE', '/api/me/photo', undefined, tok)).body.user.vehicle.photo, null);
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal((await fetch(`${base}/photos/${pid2}.jpg`)).status, 404);
+  assert.equal((await fetch(`${base}/photos/..%2fdb.jpg`)).status, 404);
+
+  const big = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(2_100_000)]);
+  assert.equal((await api('POST', '/api/me/photo', { data: big.toString('base64') }, tok)).status, 413);
 });

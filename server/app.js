@@ -1,4 +1,6 @@
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -25,25 +27,33 @@ function createApp(opts = {}) {
     userAgent: opts.userAgent ?? process.env.USER_AGENT ?? 'Rylaide/0.1 (https://github.com/Drakeion2532/rylaide_ui)',
     upstreamTimeout: opts.upstreamTimeout ?? 8000,
   };
+  // Owner bike photos live next to the data file (on the persistent disk in production).
+  cfg.photoDir = opts.photoDir ?? process.env.PHOTO_DIR ?? path.join(cfg.dataFile ? path.dirname(cfg.dataFile) : fs.mkdtempSync(path.join(os.tmpdir(), 'rylaide-photos-')), 'photos');
   const store = new Store(cfg.dataFile);
   const db = store.data;
   const app = express();
   app.disable('x-powered-by');
   // Hosts like Render/Railway terminate HTTPS at a proxy; trust it so QR invite links use https://.
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '3mb' }));
 
   // ---------- helpers ----------
   const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
   const num = (v) => (v === '' || v === null || v === undefined ? NaN : Number(v));
   const publicUser = (u) => u && { id: u.id, name: u.name, bike: u.bike, color: u.color, vehicle: u.vehicle || null };
   // Bike shown on Home and in Garage. All fields optional; odometer in km.
-  function cleanVehicle(v) {
+  const VEHICLE_TYPES = ['classic', 'roadster', 'cruiser', 'adventure', 'sport', 'commuter', 'scooter', 'ev-scooter', 'bicycle', 'e-bike'];
+  function cleanVehicle(v, prev = {}) {
     if (v === null) return null;
     if (typeof v !== 'object') return undefined;
     const odo = num(v.odometer);
-    if (v.odometer !== undefined && v.odometer !== '' && !(odo >= 0 && odo < 10_000_000)) return undefined;
-    return { make: clean(v.make, 30), model: clean(v.model, 40), odometer: Number.isFinite(odo) ? Math.round(odo) : null };
+    if (v.odometer !== undefined && v.odometer !== '' && v.odometer !== null && !(odo >= 0 && odo < 10_000_000)) return undefined;
+    const type = VEHICLE_TYPES.includes(v.type) ? v.type : prev?.type && v.type === undefined ? prev.type : null;
+    return {
+      type, make: clean(v.make, 30), model: clean(v.model, 40),
+      odometer: Number.isFinite(odo) ? Math.round(odo) : null,
+      photo: prev?.photo || null, // set only through the photo upload endpoint
+    };
   }
   const userByToken = (t) => db.users.find((u) => u.token === t);
   const groupOf = (gid) => db.groups.find((g) => g.id === gid);
@@ -99,12 +109,38 @@ function createApp(opts = {}) {
       req.user.color = req.body.color;
     }
     if (req.body?.vehicle !== undefined) {
-      const v = cleanVehicle(req.body.vehicle);
+      const v = cleanVehicle(req.body.vehicle, req.user.vehicle);
       if (v === undefined) return fail(res, 400, 'Check the bike details: odometer must be a number of km.');
       req.user.vehicle = v;
     }
     store.save();
     res.json({ user: publicUser(req.user) });
+  });
+
+  // Owner photo of the bike: JPEG, base64, resized on the phone to about 1400 px.
+  app.post('/api/me/photo', auth, (req, res) => {
+    const b64 = String(req.body?.data || '').replace(/^data:image\/jpeg;base64,/, '');
+    let buf;
+    try { buf = Buffer.from(b64, 'base64'); } catch { buf = null; }
+    if (!buf || buf.length < 1000 || buf[0] !== 0xff || buf[1] !== 0xd8) return fail(res, 400, 'Choose a photo (JPEG) of your bike.');
+    if (buf.length > 2_000_000) return fail(res, 413, 'That photo is too large. Try a smaller one.');
+    fs.mkdirSync(cfg.photoDir, { recursive: true });
+    const pid = id();
+    fs.writeFileSync(path.join(cfg.photoDir, `${pid}.jpg`), buf);
+    const old = req.user.vehicle?.photo;
+    if (old) fs.rm(path.join(cfg.photoDir, `${old}.jpg`), { force: true }, () => {});
+    req.user.vehicle = { ...(req.user.vehicle || { type: null, make: '', model: '', odometer: null }), photo: pid };
+    store.save();
+    res.json({ user: publicUser(req.user) });
+  });
+  app.delete('/api/me/photo', auth, (req, res) => {
+    const old = req.user.vehicle?.photo;
+    if (old) { fs.rm(path.join(cfg.photoDir, `${old}.jpg`), { force: true }, () => {}); req.user.vehicle.photo = null; store.save(); }
+    res.json({ user: publicUser(req.user) });
+  });
+  app.get('/photos/:pid.jpg', (req, res) => {
+    if (!/^[\w-]{8,20}$/.test(req.params.pid)) return res.status(404).end();
+    res.sendFile(path.join(cfg.photoDir, `${req.params.pid}.jpg`), { maxAge: '30d', immutable: true }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
   });
 
   // ---------- groups ----------

@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val serverUrl: String = (project.findProperty("rylaideServerUrl") as String?) ?: "http://localhost:3000"
+val serverUrl: String = (project.findProperty("rylaideServerUrl") as String?) ?: "https://rylaide.onrender.com"
 
 android {
     namespace = "com.rylaide.app"

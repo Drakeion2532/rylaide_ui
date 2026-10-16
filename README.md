@@ -54,8 +54,13 @@ the screen kept on during rides. It needs no extra libraries.
    `localhost` or `https`. Run it again whenever you reconnect the cable. (Emulator: same command.)
 5. **Run ▶** `app`. Allow Location and Microphone when asked.
 
-**Other servers.** Once it’s deployed (see *Deploy*), set its address in `android/gradle.properties`
-(`rylaideServerUrl=https://your-app.onrender.com`) and rebuild; then the phone needs no cable. You can also change it
+**Server address.** The app loads from `https://rylaide.onrender.com` by default (`rylaideServerUrl` in
+`android/gradle.properties`), so it works anywhere with mobile data and steps 1 and 4 are only needed to test
+local changes (set it to `http://localhost:3000`).
+
+**Install without a cable / share with friends:** *Build → Generate App Bundles or APKs → Generate APKs*, then
+*locate* `app-debug.apk` (in `android/app/build/outputs/apk/debug/`). Send it over WhatsApp or Drive; on the phone,
+open it and allow *Install unknown apps*. You can also change it
 in the app: *Settings → App server*, or the connect screen that shows when the server can’t be reached.
 
 **Debugging:** with the phone connected, open `chrome://inspect` in Chrome on your computer to see the app’s console.

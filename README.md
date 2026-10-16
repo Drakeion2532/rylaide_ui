@@ -66,7 +66,7 @@ in the app: *Settings → App server*, or the connect screen that shows when the
 ## Tests
 
 ```bash
-npm test                 # 12 backend tests: accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm test                 # 12 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
 npm run test:e2e         # 15 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
@@ -95,16 +95,43 @@ Which picture Home shows: the rider’s own photo if they added one; otherwise t
 (make + model → type), then keyword rules, so add models there. Uploaded photos are stored in `PHOTO_DIR`
 (default: a `photos` folder next to the data file).
 
-## Deploy for launch (Render, about 10 minutes)
+## Deploy for free (Render + Neon, about 15 minutes)
 
-1. Push this repo to GitHub (done).
-2. On [render.com](https://render.com): **New → Blueprint** → pick `rylaide_ui`. It reads `render.yaml`.
-3. Set `USER_AGENT` to something like `Rylaide/0.1 (your-email@example.com)`. OpenStreetMap and MET Norway require a contact.
-4. Deploy. You get an `https://rylaide-xxxx.onrender.com` link: that's the link you share.
+Everything here is on free plans with no card: **Render** runs the server, **Neon** stores the data.
+Render's free servers lose their disk on every restart, so accounts, groups, rides and bike photos are kept
+in the Neon database instead (`DATABASE_URL`).
 
-The Blueprint uses the **Starter plan with a 1 GB disk** (about US$7/month + $0.25/GB) so accounts, groups and rides survive restarts. Render's free plan works too, but it wipes data on every restart and sleeps after 15 minutes, which logs everyone out. Not suitable for launch day.
+**1. Database (Neon)**
+1. Sign up at [neon.tech](https://neon.tech) (GitHub sign-in works). Create a project named `rylaide`,
+   region **AWS Asia Pacific (Singapore)**.
+2. On the project dashboard, click **Connect** and copy the connection string. It looks like
+   `postgresql://neondb_owner:…@ep-…ap-southeast-1.aws.neon.tech/neondb?sslmode=require`.
+   Keep it private: it's the password to your data. The app creates its tables by itself.
 
-Any Docker host works: `docker build -t rylaide . && docker run -p 3000:3000 -v rylaide-data:/data rylaide`.
+**2. Server (Render)**
+1. Sign up at [render.com](https://render.com) with GitHub. **New → Blueprint** → pick `rylaide_ui`.
+   It reads `render.yaml` (free plan, Singapore).
+2. When it asks for the variables, paste:
+   - `DATABASE_URL`: the Neon connection string
+   - `USER_AGENT`: `Rylaide/0.1 (your-email@example.com)`. OpenStreetMap and MET Norway require a contact.
+3. **Apply**. The first build takes 3–5 minutes. When the log says `Rylaide running … data in the database`,
+   your link is at the top: `https://rylaide-xxxx.onrender.com`.
+4. Check `https://rylaide-xxxx.onrender.com/healthz` says `"storage":"database"`.
+
+**3. The Android app:** *Settings → App server* → paste the link → *Connect*. Or set
+`rylaideServerUrl` in `android/gradle.properties` and run it again from Android Studio.
+
+**What the free plans mean**
+- The server pings itself every 10 minutes so it doesn't fall asleep. That uses about 744 of Render's
+  750 free hours a month, so keep **only one** free Render service. (Set `KEEP_AWAKE=off` to let it sleep;
+  then the first open after 15 idle minutes takes about a minute.)
+- Render may restart a free server now and then. Riders see "Reconnecting" for a moment; no data is lost.
+- Neon free: 1 GB of data (plenty: tens of thousands of rides) and 100 compute hours a month. The
+  database sleeps after 5 idle minutes and wakes in about a second.
+- If the database can't be reached when the server starts, the server stops and Render retries,
+  rather than starting empty and overwriting your data.
+
+Running it on your own computer needs none of this: without `DATABASE_URL` it saves to `data/rylaide.json`.
 
 ### Settings
 
@@ -112,7 +139,9 @@ Any Docker host works: `docker build -t rylaide . && docker run -p 3000:3000 -v 
 |---|---|---|
 | `PORT` | `3000` | Web port |
 | `DATA_FILE` | `data/rylaide.json` | Where accounts, groups, rides and fuel logs are stored |
-| `PHOTO_DIR` | `photos/` next to `DATA_FILE` | Riders' bike photos (keep it on the same persistent disk) |
+| `DATABASE_URL` | none | Postgres connection string. When set, all data and bike photos are stored there (needed on free hosting) |
+| `PHOTO_DIR` | `photos/` next to `DATA_FILE` | Riders' bike photos when there's no `DATABASE_URL` |
+| `KEEP_AWAKE` | on (on Render) | `off` lets a free Render server sleep when idle |
 | `USER_AGENT` | repo URL | Sent to map services; include a contact email |
 | `OSRM_URL` | public OSRM demo | Routing server |
 | `NOMINATIM_URL` | public Nominatim | Place search |
@@ -138,7 +167,7 @@ These are fine for a launch with your riding group, but worth knowing:
 - **iPhone:** voice messages play while Rylaide is open on screen. iOS pauses web apps in the background, and location sharing pauses too.
 - **Accounts have no password.** Each phone gets its own sign-in; signing out or clearing browser data starts a new account.
 - **Free map services:** the public OSRM routing server and Nominatim search are meant for light use (about one request per second). That's fine for a riding group. For a public launch, self-host them or use a paid provider via `OSRM_URL` / `NOMINATIM_URL`.
-- **One server:** data is a single JSON file. That's good for hundreds of riders, not thousands. Move to a database (Firebase, as planned for the native app) before scaling.
+- **One server:** all data is kept as one JSON document (a file, or one database row on free hosting). That's good for hundreds of riders, not thousands. Move to proper tables (or Firebase, as planned for the native app) before scaling.
 
 ## App icon
 

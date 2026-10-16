@@ -26,11 +26,25 @@ function createApp(opts = {}) {
     weather: opts.weather ?? process.env.WEATHER_URL ?? 'https://api.met.no/weatherapi/locationforecast/2.0/compact',
     userAgent: opts.userAgent ?? process.env.USER_AGENT ?? 'Rylaide/0.1 (https://github.com/Drakeion2532/rylaide_ui)',
     upstreamTimeout: opts.upstreamTimeout ?? 8000,
+    databaseUrl: opts.databaseUrl ?? process.env.DATABASE_URL ?? '',
   };
   // Owner bike photos live next to the data file (on the persistent disk in production).
   cfg.photoDir = opts.photoDir ?? process.env.PHOTO_DIR ?? path.join(cfg.dataFile ? path.dirname(cfg.dataFile) : fs.mkdtempSync(path.join(os.tmpdir(), 'rylaide-photos-')), 'photos');
-  const store = new Store(cfg.dataFile);
+  const remote = cfg.databaseUrl ? new (require('./pg').PgBackend)(cfg.databaseUrl) : null;
+  const store = new Store(cfg.dataFile, { remote });
   const db = store.data;
+  const ready = store.init();
+  ready.catch(() => {}); // the caller awaits it and decides what to do
+  // Bike photos: database rows when DATABASE_URL is set, otherwise files in photoDir.
+  const photos = remote ? {
+    put: (pid, buf) => remote.putPhoto(pid, buf),
+    get: (pid) => remote.getPhoto(pid),
+    del: (pid) => remote.delPhoto(pid).catch((e) => console.error('Photo delete failed:', e.message)),
+  } : {
+    put: async (pid, buf) => { fs.mkdirSync(cfg.photoDir, { recursive: true }); fs.writeFileSync(path.join(cfg.photoDir, `${pid}.jpg`), buf); },
+    get: async (pid) => { try { return fs.readFileSync(path.join(cfg.photoDir, `${pid}.jpg`)); } catch { return null; } },
+    del: async (pid) => fs.promises.rm(path.join(cfg.photoDir, `${pid}.jpg`), { force: true }),
+  };
   const app = express();
   app.disable('x-powered-by');
   // Hosts like Render/Railway terminate HTTPS at a proxy; trust it so QR invite links use https://.
@@ -82,7 +96,7 @@ function createApp(opts = {}) {
   }
 
   // ---------- accounts ----------
-  app.get('/healthz', (req, res) => res.json({ ok: true, users: db.users.length, groups: db.groups.length }));
+  app.get('/healthz', (req, res) => res.json({ ok: true, users: db.users.length, groups: db.groups.length, storage: remote ? 'database' : 'file' }));
 
   app.post('/api/users', (req, res) => {
     const name = clean(req.body?.name, LIMITS.name);
@@ -118,29 +132,32 @@ function createApp(opts = {}) {
   });
 
   // Owner photo of the bike: JPEG, base64, resized on the phone to about 1400 px.
-  app.post('/api/me/photo', auth, (req, res) => {
+  app.post('/api/me/photo', auth, async (req, res) => {
     const b64 = String(req.body?.data || '').replace(/^data:image\/jpeg;base64,/, '');
     let buf;
     try { buf = Buffer.from(b64, 'base64'); } catch { buf = null; }
     if (!buf || buf.length < 1000 || buf[0] !== 0xff || buf[1] !== 0xd8) return fail(res, 400, 'Choose a photo (JPEG) of your bike.');
     if (buf.length > 2_000_000) return fail(res, 413, 'That photo is too large. Try a smaller one.');
-    fs.mkdirSync(cfg.photoDir, { recursive: true });
     const pid = id();
-    fs.writeFileSync(path.join(cfg.photoDir, `${pid}.jpg`), buf);
+    try { await photos.put(pid, buf); } catch (e) { console.error('Photo save failed:', e.message); return fail(res, 503, 'Couldn’t save the photo. Try again.'); }
     const old = req.user.vehicle?.photo;
-    if (old) fs.rm(path.join(cfg.photoDir, `${old}.jpg`), { force: true }, () => {});
+    if (old) photos.del(old);
     req.user.vehicle = { ...(req.user.vehicle || { type: null, make: '', model: '', odometer: null }), photo: pid };
     store.save();
     res.json({ user: publicUser(req.user) });
   });
   app.delete('/api/me/photo', auth, (req, res) => {
     const old = req.user.vehicle?.photo;
-    if (old) { fs.rm(path.join(cfg.photoDir, `${old}.jpg`), { force: true }, () => {}); req.user.vehicle.photo = null; store.save(); }
+    if (old) { photos.del(old); req.user.vehicle.photo = null; store.save(); }
     res.json({ user: publicUser(req.user) });
   });
-  app.get('/photos/:pid.jpg', (req, res) => {
+  app.get('/photos/:pid.jpg', async (req, res) => {
     if (!/^[\w-]{8,20}$/.test(req.params.pid)) return res.status(404).end();
-    res.sendFile(path.join(cfg.photoDir, `${req.params.pid}.jpg`), { maxAge: '30d', immutable: true }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+    try {
+      const buf = await photos.get(req.params.pid);
+      if (!buf) return res.status(404).end();
+      res.set({ 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=2592000, immutable' }).send(buf);
+    } catch (e) { console.error('Photo read failed:', e.message); res.status(503).end(); }
   });
 
   // ---------- groups ----------
@@ -544,11 +561,10 @@ function createApp(opts = {}) {
     clearInterval(heartbeat);
     for (const ws of wss.clients) ws.terminate();
     wss.close();
-    store.flush();
-    return new Promise((r) => server.close(r));
+    return Promise.all([store.close().catch((e) => console.error('Final save failed:', e.message)), new Promise((r) => server.close(r))]);
   }
 
-  return { app, server, store, close, cfg };
+  return { app, server, store, close, cfg, ready };
 }
 
 function haversine(a, b) {

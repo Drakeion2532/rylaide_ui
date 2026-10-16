@@ -1,16 +1,14 @@
-# One-click deploy on Render (Blueprint). A persistent disk keeps accounts, groups and rides across restarts.
+# Free deploy on Render (Blueprint). Free web services have no disk, so data lives in a free
+# Neon Postgres database: paste its connection string as DATABASE_URL when Render asks.
 services:
   - type: web
     name: rylaide
     runtime: docker
-    plan: starter
+    plan: free
+    region: singapore
     healthCheckPath: /healthz
     envVars:
-      - key: DATA_FILE
-        value: /data/rylaide.json
+      - key: DATABASE_URL
+        sync: false   # from neon.tech: postgresql://…neon.tech/neondb?sslmode=require
       - key: USER_AGENT
         sync: false   # e.g. "Rylaide/0.1 (you@example.com)" — OSM and MET Norway require a contact
-    disk:
-      name: rylaide-data
-      mountPath: /data
-      sizeGB: 1

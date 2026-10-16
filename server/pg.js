@@ -10,6 +10,8 @@ class PgBackend {
     this.pool = new Pool({
       connectionString: url,
       ssl: local || /sslmode=/.test(url) ? undefined : { rejectUnauthorized: true },
+      // Neon's strings include channel_binding=require: use SCRAM-SHA-256-PLUS (binds the login to the TLS session)
+      enableChannelBinding: /channel_binding=require/.test(url),
       max: 3,
       idleTimeoutMillis: 60_000,
       connectionTimeoutMillis: 20_000, // a sleeping free database can take a few seconds to wake

@@ -26,6 +26,11 @@ SOS countdown and ride summary.
 - Mic test with a live level meter, record and playback
 - Auto Day / Evening / Night from sunrise and sunset (or fixed Light / Dark), 8 accent colours, Glove Mode, spoken directions on/off
 - Works offline for the app shell and recently seen map areas; reconnects automatically
+- **Garage:** keep several vehicles, pick which one you're riding (it shows on Home), per-vehicle fuel log, a service & documents log (oil, chain, tyres, insurance, PUC) with reminders before things are due
+- **Groups:** Chat · Rides · Members · Shared tabs; group info; leader tools (rename, remove a rider, hand over, new code, delete); split expenses with who-owes-whom; shared places (meet points, fuel, dhabas); make a group with riders nearby, no code
+- **Ride:** pick who's riding today (they get a "… started a ride · Join" invite), choose a destination by dropping a pin, a Pillion tab with break reminders, crash detection (30 s countdown, then SOS), and an Arrived screen
+- **Account:** Terms & privacy before you start, sign in on another phone with your account code, delete account
+- **Settings:** Account, Appearance, Riding & directions, Safety & SOS, Location & privacy, Audio & headset, Offline & storage, About, and Customer care with the Rylaide Assistant (guided fixes, then email Relaide.com@gmail.com)
 
 ## Run it locally
 
@@ -71,8 +76,8 @@ in the app: *Settings → App server*, or the connect screen that shows when the
 ## Tests
 
 ```bash
-npm test                 # 12 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
-npm run test:e2e         # 15 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm test                 # 21 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm run test:e2e         # 19 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
 
@@ -195,7 +200,10 @@ Colours: asphalt `#232B36`, hazard orange `#F98924`, signal teal `#2FC9C3`.
 server/   Express + WebSocket backend (app.js), JSON store
 web/      The app: index.html, styles.css (Figma tokens + components), service worker
 web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), ui (components), theme, map, voice
-web/js/screens/  onboarding, home, groups, history (+ summary), garage (+ fuel, settings, contacts, mic test), setup, ride
+web/js/screens/  onboarding (+ terms, sign in), home, groups, groupinfo (info, members, expenses, settings), history (+ summary),
+          vehicles (garage, vehicle, service), garage (fuel, contacts, mic test), settings (hub + pages, customer care),
+          setup, ride, extra (crash, arrived, nearby, drop a pin)
+server/features.js  vehicles, service, group tools, expenses, shared places, sign-in code, nearby, reverse geocode
 web/js/vehicles.js  vehicle catalogue, type detection, Home picture · bikeform.js  the bike form
 android/  Android Studio project: MainActivity (WebView), RylaideBridge (speech, vibration, share, keep awake)
 tests/    api.test.js (node:test), e2e.py (Playwright, two riders)

@@ -54,7 +54,20 @@ function createApp(opts = {}) {
   // ---------- helpers ----------
   const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
   const num = (v) => (v === '' || v === null || v === undefined ? NaN : Number(v));
-  const publicUser = (u) => u && { id: u.id, name: u.name, bike: u.bike, color: u.color, vehicle: u.vehicle || null };
+  const publicUser = (u) => u && { id: u.id, name: u.name, bike: u.bike, color: u.color, vehicle: activeVehicle(u), vehicleCount: vehiclesOf(u).length };
+  /** A rider's vehicles (12 My vehicles). Older accounts had one `vehicle`; move it into the list on first use. */
+  function vehiclesOf(u) {
+    if (!Array.isArray(u.vehicles)) {
+      u.vehicles = u.vehicle ? [{ id: id(), ...u.vehicle }] : [];
+      u.activeVehicleId = u.vehicles[0]?.id || null;
+      delete u.vehicle;
+    }
+    return u.vehicles;
+  }
+  function activeVehicle(u) {
+    const vs = vehiclesOf(u);
+    return vs.find((v) => v.id === u.activeVehicleId) || vs[0] || null;
+  }
   // Bike shown on Home and in Garage. All fields optional; odometer in km.
   const VEHICLE_TYPES = ['classic', 'roadster', 'cruiser', 'adventure', 'sport', 'commuter', 'scooter', 'ev-scooter', 'bicycle', 'e-bike'];
   function cleanVehicle(v, prev = {}) {
@@ -62,14 +75,30 @@ function createApp(opts = {}) {
     if (typeof v !== 'object') return undefined;
     const odo = num(v.odometer);
     if (v.odometer !== undefined && v.odometer !== '' && v.odometer !== null && !(odo >= 0 && odo < 10_000_000)) return undefined;
+    const year = num(v.year);
+    if (v.year !== undefined && v.year !== '' && v.year !== null && !(year >= 1950 && year <= new Date().getFullYear() + 1)) return undefined;
+    const keep = (k, f) => (v[k] === undefined ? prev?.[k] ?? null : f(v[k]));
     const type = VEHICLE_TYPES.includes(v.type) ? v.type : prev?.type && v.type === undefined ? prev.type : null;
     return {
-      type, make: clean(v.make, 30), model: clean(v.model, 40),
-      odometer: Number.isFinite(odo) ? Math.round(odo) : null,
+      id: prev?.id || id(),
+      type, make: clean(v.make ?? prev?.make, 30), model: clean(v.model ?? prev?.model, 40),
+      odometer: v.odometer === undefined ? prev?.odometer ?? null : Number.isFinite(odo) ? Math.round(odo) : null,
+      year: keep('year', () => (Number.isFinite(year) ? Math.round(year) : null)),
+      reg: keep('reg', (x) => clean(x, 15).toUpperCase() || null),
+      nickname: keep('nickname', (x) => clean(x, 30) || null),
       photo: prev?.photo || null, // set only through the photo upload endpoint
     };
   }
+  const VEHICLE_ERROR = 'Check the bike details: odometer must be a number of km and the year between 1950 and next year.';
   const userByToken = (t) => db.users.find((u) => u.token === t);
+  /** Account code (05 Sign in): how a rider gets back into their account on a new phone. No look-alike characters. */
+  function newSigninCode() {
+    const CH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let c;
+    do c = Array.from(require('crypto').randomBytes(8), (b) => CH[b % CH.length]).join('').replace(/(.{4})/, '$1-');
+    while (db.users.some((u) => u.signinCode === c));
+    return c;
+  }
   const groupOf = (gid) => db.groups.find((g) => g.id === gid);
   const isMember = (g, uid) => g && g.members.includes(uid);
   const fail = (res, status, error) => res.status(status).json({ error });
@@ -91,6 +120,7 @@ function createApp(opts = {}) {
   function groupView(g) {
     return {
       id: g.id, code: g.code, name: g.name, ownerId: g.ownerId, plan: g.plan, createdAt: g.createdAt,
+      description: g.description || '', live: g.live && Date.now() - g.live.startedAt < 12 * 3600e3 ? g.live : null,
       members: g.members.map((m) => ({ ...publicUser(db.users.find((u) => u.id === m)), online: online(g.id, m) })),
     };
   }
@@ -104,8 +134,11 @@ function createApp(opts = {}) {
     const u = {
       id: id(), token: token(), name, bike: clean(req.body?.bike, 20) || 'motorcycle',
       color: COLORS[db.users.length % COLORS.length], createdAt: Date.now(),
-      vehicle: req.body?.vehicle ? cleanVehicle(req.body.vehicle) || null : null,
+      vehicles: [], activeVehicleId: null, termsAt: req.body?.agreed ? Date.now() : null,
+      signinCode: newSigninCode(),
     };
+    const v0 = req.body?.vehicle ? cleanVehicle(req.body.vehicle) : null;
+    if (v0) { u.vehicles.push(v0); u.activeVehicleId = v0.id; }
     db.users.push(u);
     store.save();
     res.status(201).json({ user: publicUser(u), token: u.token });
@@ -123,16 +156,22 @@ function createApp(opts = {}) {
       req.user.color = req.body.color;
     }
     if (req.body?.vehicle !== undefined) {
-      const v = cleanVehicle(req.body.vehicle, req.user.vehicle);
-      if (v === undefined) return fail(res, 400, 'Check the bike details: odometer must be a number of km.');
-      req.user.vehicle = v;
+      // Edits the active vehicle (creates the first one), as the Home and onboarding forms expect.
+      const vs = vehiclesOf(req.user), cur = activeVehicle(req.user);
+      if (req.body.vehicle === null) {
+        if (cur) { if (cur.photo) photos.del(cur.photo); vs.splice(vs.indexOf(cur), 1); req.user.activeVehicleId = vs[0]?.id || null; }
+      } else {
+        const v = cleanVehicle(req.body.vehicle, cur);
+        if (v === undefined) return fail(res, 400, VEHICLE_ERROR);
+        if (cur) vs[vs.indexOf(cur)] = v; else { vs.push(v); req.user.activeVehicleId = v.id; }
+      }
     }
     store.save();
     res.json({ user: publicUser(req.user) });
   });
 
-  // Owner photo of the bike: JPEG, base64, resized on the phone to about 1400 px.
-  app.post('/api/me/photo', auth, async (req, res) => {
+  // Owner photo of a bike: JPEG, base64, resized on the phone to about 1400 px.
+  async function setVehiclePhoto(req, res, v) {
     const b64 = String(req.body?.data || '').replace(/^data:image\/jpeg;base64,/, '');
     let buf;
     try { buf = Buffer.from(b64, 'base64'); } catch { buf = null; }
@@ -140,17 +179,19 @@ function createApp(opts = {}) {
     if (buf.length > 2_000_000) return fail(res, 413, 'That photo is too large. Try a smaller one.');
     const pid = id();
     try { await photos.put(pid, buf); } catch (e) { console.error('Photo save failed:', e.message); return fail(res, 503, 'Couldn’t save the photo. Try again.'); }
-    const old = req.user.vehicle?.photo;
-    if (old) photos.del(old);
-    req.user.vehicle = { ...(req.user.vehicle || { type: null, make: '', model: '', odometer: null }), photo: pid };
+    const vs = vehiclesOf(req.user);
+    if (!v) { v = cleanVehicle({}); vs.push(v); req.user.activeVehicleId = v.id; }
+    if (v.photo) photos.del(v.photo);
+    v.photo = pid;
     store.save();
-    res.json({ user: publicUser(req.user) });
-  });
-  app.delete('/api/me/photo', auth, (req, res) => {
-    const old = req.user.vehicle?.photo;
-    if (old) { photos.del(old); req.user.vehicle.photo = null; store.save(); }
-    res.json({ user: publicUser(req.user) });
-  });
+    res.json({ user: publicUser(req.user), vehicle: v });
+  }
+  function clearVehiclePhoto(req, res, v) {
+    if (v?.photo) { photos.del(v.photo); v.photo = null; store.save(); }
+    res.json({ user: publicUser(req.user), vehicle: v || null });
+  }
+  app.post('/api/me/photo', auth, (req, res) => setVehiclePhoto(req, res, activeVehicle(req.user)));
+  app.delete('/api/me/photo', auth, (req, res) => clearVehiclePhoto(req, res, activeVehicle(req.user)));
   app.get('/photos/:pid.jpg', async (req, res) => {
     if (!/^[\w-]{8,20}$/.test(req.params.pid)) return res.status(404).end();
     try {
@@ -188,19 +229,29 @@ function createApp(opts = {}) {
     res.json({ groups: db.groups.filter((g) => isMember(g, req.user.id)).map(groupView) });
   });
   app.get('/api/groups/:id', auth, memberGroup, (req, res) => res.json({ group: groupView(req.group) }));
-  app.post('/api/groups/:id/leave', auth, memberGroup, (req, res) => {
-    const g = req.group;
-    g.members = g.members.filter((m) => m !== req.user.id);
-    lastLoc.get(g.id)?.delete(req.user.id);
+  /** Take a rider out of a group (leave, removed by the leader, or account deleted). Empty groups are deleted. */
+  function dropFromGroup(g, user, how = 'left') {
+    g.members = g.members.filter((m) => m !== user.id);
+    lastLoc.get(g.id)?.delete(user.id);
+    for (const ws of rooms.get(g.id) || []) if (ws.user.id === user.id) { rooms.get(g.id).delete(ws); ws.groupId = null; }
     if (!g.members.length) {
-      db.groups.splice(db.groups.indexOf(g), 1);
-      db.messages = db.messages.filter((m) => m.groupId !== g.id);
+      deleteGroup(g);
     } else {
-      if (g.ownerId === req.user.id) g.ownerId = g.members[0];
+      if (g.ownerId === user.id) g.ownerId = g.members[0];
       broadcast(g.id, { t: 'members', group: groupView(g) });
-      systemMessage(g, `${req.user.name} left the group`);
+      systemMessage(g, how === 'removed' ? `${user.name} was removed from the group` : `${user.name} left the group`);
     }
     store.save();
+  }
+  function deleteGroup(g) {
+    db.groups.splice(db.groups.indexOf(g), 1);
+    db.messages = db.messages.filter((m) => m.groupId !== g.id);
+    db.expenses = (db.expenses || []).filter((x) => x.groupId !== g.id);
+    db.shared = (db.shared || []).filter((x) => x.groupId !== g.id);
+    lastLoc.delete(g.id); sos.delete(g.id);
+  }
+  app.post('/api/groups/:id/leave', auth, memberGroup, (req, res) => {
+    dropFromGroup(req.group, req.user, 'left');
     res.json({ ok: true });
   });
   app.put('/api/groups/:id/plan', auth, memberGroup, (req, res) => {
@@ -252,7 +303,10 @@ function createApp(opts = {}) {
     const r = {
       id: id(), userId: req.user.id, name: clean(b.name, 60) || clean(b.destination, 80) || `Ride on ${new Date().toDateString()}`,
       destination: clean(b.destination, 80) || null, origin: clean(b.origin, 80) || null,
-      groupName: clean(b.groupName, 40) || null, vehicle: req.user.vehicle?.model || null,
+      groupName: clean(b.groupName, 40) || null, groupId: isMember(groupOf(b.groupId), req.user.id) ? b.groupId : null,
+      vehicleId: vehiclesOf(req.user).some((v) => v.id === b.vehicleId) ? b.vehicleId : activeVehicle(req.user)?.id || null,
+      vehicle: (vehiclesOf(req.user).find((v) => v.id === b.vehicleId) || activeVehicle(req.user))?.model || null,
+      solo: !b.groupId, pillion: !!b.pillion,
       startedAt: num(b.startedAt) || Date.now(), duration: Math.max(0, num(b.duration) || 0),
       distance: Math.round(distance), maxSpeed: Math.max(0, num(b.maxSpeed) || 0), points,
     };
@@ -271,8 +325,11 @@ function createApp(opts = {}) {
   });
 
   // ---------- fuel log ----------
-  function fuelView(uid) {
-    const list = db.fuel.filter((f) => f.userId === uid).sort((a, b) => a.odometer - b.odometer);
+  /** Fill-ups of one vehicle. Entries from before multi-vehicle support belong to the first vehicle. */
+  const fuelOf = (u, vid) => { const first = vehiclesOf(u)[0]?.id || null; return db.fuel.filter((f) => f.userId === u.id && (!vid || (f.vehicleId || first) === vid)); };
+  const vehicleParam = (u, vid) => (vehiclesOf(u).some((v) => v.id === vid) ? vid : activeVehicle(u)?.id || null);
+  function fuelView(u, vid) {
+    const list = fuelOf(u, vid).sort((a, b) => a.odometer - b.odometer);
     // Mileage uses the full-tank method: distance since the previous full fill / litres added since then.
     let lastFull = null, litresSince = 0;
     const out = list.map((f) => {
@@ -296,26 +353,29 @@ function createApp(opts = {}) {
       },
     };
   }
-  app.get('/api/fuel', auth, (req, res) => res.json(fuelView(req.user.id)));
+  app.get('/api/fuel', auth, (req, res) => res.json(fuelView(req.user, vehicleParam(req.user, req.query.vehicle))));
   app.post('/api/fuel', auth, (req, res) => {
     const b = req.body || {};
     const odometer = num(b.odometer), litres = num(b.litres), pricePerLitre = num(b.pricePerLitre);
     if (!(odometer >= 0) || !(litres > 0) || !(pricePerLitre >= 0)) {
       return fail(res, 400, 'Enter the odometer reading, litres and price per litre.');
     }
-    const prev = db.fuel.filter((f) => f.userId === req.user.id);
-    if (prev.some((f) => f.odometer === odometer)) return fail(res, 409, 'There is already a fill-up at that odometer reading.');
-    const f = { id: id(), userId: req.user.id, odometer, litres, pricePerLitre, full: b.full !== false, date: clean(b.date, 10) || new Date().toISOString().slice(0, 10) };
+    const vid = vehicleParam(req.user, b.vehicleId);
+    if (fuelOf(req.user, vid).some((f) => f.odometer === odometer)) return fail(res, 409, 'There is already a fill-up at that odometer reading.');
+    const f = { id: id(), userId: req.user.id, vehicleId: vid, odometer, litres, pricePerLitre, full: b.full !== false, date: clean(b.date, 10) || new Date().toISOString().slice(0, 10) };
     db.fuel.push(f);
+    const veh = vehiclesOf(req.user).find((v) => v.id === vid);
+    if (veh && odometer > (veh.odometer || 0)) veh.odometer = Math.round(odometer); // the bike's odometer follows the fuel log
     store.save();
-    res.status(201).json(fuelView(req.user.id));
+    res.status(201).json({ ...fuelView(req.user, vid), user: publicUser(req.user) });
   });
   app.delete('/api/fuel/:fid', auth, (req, res) => {
     const i = db.fuel.findIndex((f) => f.id === req.params.fid && f.userId === req.user.id);
     if (i < 0) return fail(res, 404, 'Entry not found.');
+    const vid = db.fuel[i].vehicleId || vehiclesOf(req.user)[0]?.id || null;
     db.fuel.splice(i, 1);
     store.save();
-    res.json(fuelView(req.user.id));
+    res.json(fuelView(req.user, vid));
   });
 
   // ---------- emergency contacts ----------
@@ -409,6 +469,14 @@ function createApp(opts = {}) {
     }
   });
 
+  // ---------- garage, groups, accounts, nearby (Figma: navigation map screens) ----------
+  require('./features')(app, {
+    db, store, cfg, auth, memberGroup, groupView, publicUser, vehiclesOf, activeVehicle, cleanVehicle, VEHICLE_ERROR,
+    setVehiclePhoto, clearVehiclePhoto, photos, clean, num, fail, id, code, newSigninCode, LIMITS,
+    upstream, broadcast: (...a) => broadcast(...a), systemMessage: (...a) => systemMessage(...a), toUser: (...a) => toUser(...a),
+    dropFromGroup: (...a) => dropFromGroup(...a), deleteGroup: (...a) => deleteGroup(...a), userByToken, haversine,
+  });
+
   // ---------- static frontend ----------
   app.use('/vendor/maplibre', express.static(path.join(ROOT, 'node_modules/maplibre-gl/dist'), { maxAge: '7d' }));
   app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource-variable/google-sans-flex/files'), { maxAge: '30d' }));
@@ -428,6 +496,11 @@ function createApp(opts = {}) {
   function online(gid, uid) {
     for (const ws of rooms.get(gid) || []) if (ws.user.id === uid) return true;
     return false;
+  }
+  /** Send to every open connection of one rider (any group). */
+  function toUser(uid, msg) {
+    const data = JSON.stringify(msg);
+    for (const ws of wss.clients) if (ws.user?.id === uid && ws.readyState === 1) ws.send(data);
   }
   function broadcast(gid, msg, except) {
     const data = JSON.stringify(msg);

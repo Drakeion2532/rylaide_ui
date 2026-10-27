@@ -20,7 +20,8 @@ function mount(name, params) {
   if (!render) throw new Error(`No screen ${name}`);
   const el = h('section', { class: 'screen', 'data-screen': name });
   const cleanup = render(el, params || {}) || null;
-  return { name, params, el, cleanup };
+  // A screen can set el.onResume to refresh when the screen above it closes.
+  return { name, params, el, cleanup, onResume: () => el.onResume?.() };
 }
 
 function animateOut(entry, cls) {

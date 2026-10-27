@@ -12,6 +12,10 @@ import './screens/history.js';
 import './screens/garage.js';
 import './screens/setup.js';
 import './screens/ride.js';
+import './screens/vehicles.js';
+import './screens/groupinfo.js';
+import './screens/settings.js';
+import './screens/extra.js';
 
 const NAV = [
   { tab: 'home', label: 'Home', icon: 'home' },
@@ -82,6 +86,22 @@ on('sos-cancel', (uid) => {
   if (el) { el.remove(); const m = ctx.group?.members.find((x) => x.id === uid); snackbar(`${m?.name || 'Your rider'} is safe. SOS cancelled.`); }
 });
 
+// 30a Possible crash detected: full-screen countdown over whatever is open.
+on('crash', (c) => { if (router.current()?.name !== 'crash' && router.current()?.name !== 'sos') router.push('crash', c, { anim: 'up' }); });
+// 32 Arrived
+on('arrived', (d) => { if (ctx.ride && !['arrived', 'sos', 'crash'].includes(router.current()?.name)) router.push('arrived', { dest: d }, { anim: 'up' }); });
+// A rider in your group started a ride and picked you.
+on('ride-live', (m) => {
+  if (!store.get('invites', true)) return;
+  if (ctx.ride) return;
+  snackbar(`${m.live.byName} started a ride${m.live.destination ? ` to ${m.live.destination}` : ''}`, { ms: 15000, action: { label: 'Join', run: () => {
+    const g = ctx.groups.find((x) => x.id === m.groupId);
+    if (g) engine.openGroup(g);
+    router.push('setup', m.live.lat != null ? { mode: 'group', quickDest: { name: m.live.destination, lat: m.live.lat, lng: m.live.lng } } : { mode: 'group' });
+  } } });
+});
+on('group-gone', (m) => { const top = router.current(); if (top && ['group', 'groupinfo', 'members', 'expenses', 'groupsettings'].includes(top.name) && top.params?.id === m.groupId) router.tab('groups', { force: true }); });
+
 window.addEventListener('rylaide:signedout', () => {
   if (!api.token) return;
   api.setToken(null);
@@ -95,8 +115,10 @@ async function boot() {
   applyTheme();
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const splashMin = new Promise((r) => setTimeout(r, reduce ? 0 : 1300));
-  const join = new URLSearchParams(location.search).get('join');
+  const qs = new URLSearchParams(location.search);
+  const join = qs.get('join');
   if (join) store.set('pendingJoin', join.toUpperCase());
+  if (qs.get('group')) store.set('pendingGroup', qs.get('group'));
   if (join || location.search) history.replaceState(null, '', '/');
 
   let signedIn = false;
@@ -111,7 +133,7 @@ async function boot() {
 }
 
 let started = false;
-export async function startApp({ fresh } = {}) {
+export async function startApp({ fresh, welcomeBack } = {}) {
   if (!started) {
     started = true;
     engine.wireRealtime();
@@ -127,7 +149,10 @@ export async function startApp({ fresh } = {}) {
     store.del('pendingJoin');
     try { const g = await engine.joinGroup(pending); snackbar(`You joined ${g.name}`); } catch (e) { snackbar(e.message); }
   }
+  const pg = store.get('pendingGroup');
+  if (pg) { store.del('pendingGroup'); const g = ctx.groups.find((x) => x.id === pg); if (g) { engine.openGroup(g); router.push('group', { id: g.id }); } }
   if (fresh) emit('snack', 'You’re all set. Tap Start ride when you’re ready.');
+  if (welcomeBack) emit('snack', `Welcome back, ${ctx.user.name.split(' ')[0]}`);
   if (store.get('activeRide')) { store.del('activeRide'); snackbar('Your last ride was interrupted and wasn’t saved.'); }
 }
 window.addEventListener('rylaide:start', (e) => startApp(e.detail || {}));

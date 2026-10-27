@@ -1,6 +1,7 @@
 // Components from Figma "02 — Components", as small DOM builders.
 import { h, initials, vibrate } from './util.js';
 import { ICONS } from './icons.js';
+import { back as routerBack } from './router.js';
 
 /** Material Symbols Rounded glyph. Uses the subset font's codepoints so the font stays tiny. */
 export function ic(name, { fill = false, size, cls = '' } = {}) {
@@ -42,7 +43,7 @@ export function liftOnScroll(bar, scroller) {
 export function listItem({ icon, lead, title, sub, trail, onclick, cls = '', tag = 'div', attrs = {} }) {
   const el = h(onclick ? 'button' : tag, { type: onclick ? 'button' : undefined, class: `list-item${onclick ? ' tappable' : ''} ${cls}`, onclick, ...attrs },
     lead || (icon ? h('span', { class: 'lead' }, ic(icon)) : null),
-    h('span', { class: 'main' }, h('span', { class: 'body-l' }, title), sub ? h('span', { class: 'body-m variant' }, sub) : null),
+    h('span', { class: 'main' }, h('span', { class: 'body-l' }, title), sub ? h('span', { class: `body-m variant${String(sub).length > 44 ? ' wrap' : ''}` }, sub) : null),
     trail !== undefined && trail !== null ? h('span', { class: 'trail label-m' }, trail) : null);
   return el;
 }
@@ -219,3 +220,18 @@ export function sheet(build) {
     return el;
   });
 }
+
+/** Standard child page: top bar with Back + title, scrolling body (Figma: Top app bar · small). */
+export function page(el, title, { back: onBack, actions = [], foot, bodyCls = 'pad' } = {}) {
+  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: onBack || routerBack }), h('h1', { class: 'title title-l' }, title), ...actions);
+  const body = h('div', { class: `screen-body ${bodyCls}` });
+  el.append(bar, body, foot || null);
+  liftOnScroll(bar, body);
+  return { bar, body, setTitle: (t) => (bar.querySelector('h1').textContent = t) };
+}
+
+/** Section heading inside a page (Figma: List · section header). */
+export const sectionTitle = (text, trail) => h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, text, trail ? h('span', { class: 'count label-m' }, trail) : null);
+
+/** Money in rupees, Indian grouping. */
+export const rupees = (n) => `₹${(Math.round(n * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;

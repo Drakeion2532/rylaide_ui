@@ -5,6 +5,7 @@ import { ctx, onMany } from '../state.js';
 import { ic, button, iconButton, avatar, avatarStack } from '../ui.js';
 import { register, push, tab } from '../router.js';
 import { editBikeSheet } from './garage.js';
+import { switchVehicleSheet } from './vehicles.js';
 import { routeThumb } from '../map.js';
 import { onlineRiders } from '../engine.js';
 import { checklistStatus } from './setup.js';
@@ -30,11 +31,13 @@ register('home', (el) => {
     const head = h('header', { class: 'home-head' },
       h('div', { class: 'greet' }, h('div', { class: 'body-m variant' }, `${fmtDay()}${weatherText(ctx.weather)}`), h('h1', { class: 'headline-m' }, `Hi, ${(u.name || '').split(' ')[0]}`)),
       iconButton('settings', { label: 'Settings', onclick: () => push('settings') }),
-      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Your profile', onclick: () => push('settings') }, avatar(u.name || '?', { accent: true })));
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'Your account', onclick: () => push('account') }, avatar(u.name || '?', { accent: true })));
 
     const hero = h('section', { class: 'hero', style: `background-image:url("${heroImage(v)}")`, 'aria-label': 'Your bike' },
       h('span', { class: 'tag-glass label-m' }, ic(TYPES[vehicleType(v)].icon), 'My ride'),
-      iconButton(v.photo ? 'swap_horiz' : 'add_a_photo', { label: v.photo ? 'Change bike' : 'Add a photo of your bike', style: 'glass', small: true, onclick: editBikeSheet, attrs: { class: 'icon-btn glass small swap' } }),
+      (u.vehicleCount || 0) > 1
+        ? iconButton('swap_horiz', { label: 'Switch vehicle', style: 'glass', small: true, onclick: switchVehicleSheet, attrs: { class: 'icon-btn glass small swap' } })
+        : iconButton(v.photo ? 'swap_horiz' : 'add_a_photo', { label: v.photo ? 'Change bike' : 'Add a photo of your bike', style: 'glass', small: true, onclick: editBikeSheet, attrs: { class: 'icon-btn glass small swap' } }),
       h('div', { class: 'info' },
         h('div', {}, h('div', { class: 'title-s make' }, v.make || 'Your bike'), h('div', { class: 'display-s' }, v.model || 'Add your bike')),
         h('div', { class: 'stats' },

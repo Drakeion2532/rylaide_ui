@@ -4,13 +4,17 @@ import { ic, field, button, snackbar } from './ui.js';
 import { MAKES, modelsFor, inferType, TYPES, heroImage, photoToJpeg } from './vehicles.js';
 
 let uid = 0;
-export function bikeForm({ vehicle = {}, onSurface = false } = {}) {
+export function bikeForm({ vehicle = {}, onSurface = false, extra = false } = {}) {
   const n = ++uid;
   const makeList = h('datalist', { id: `makes-${n}` }, MAKES.map((m) => h('option', { value: m })));
   const modelList = h('datalist', { id: `models-${n}` });
   const make = field({ label: 'Make', value: vehicle.make || '', attrs: { maxlength: 30, list: `makes-${n}`, autocomplete: 'off', name: 'make' }, onSurface, support: 'Royal Enfield, Honda, Ather, Btwin…' });
   const model = field({ label: 'Model', value: vehicle.model || '', attrs: { maxlength: 40, list: `models-${n}`, autocomplete: 'off', name: 'model' }, onSurface });
   const odo = field({ label: 'Odometer (km)', type: 'number', value: vehicle.odometer ?? '', attrs: { inputmode: 'numeric', min: 0, name: 'odometer' }, onSurface, support: 'Optional. Used by your fuel log.' });
+  // 11e/11f extra details (Garage only; onboarding keeps it short)
+  const nick = extra ? field({ label: 'Nickname', value: vehicle.nickname || '', attrs: { maxlength: 30, name: 'nickname' }, onSurface, support: 'Optional, like “Weekend bike”' }) : null;
+  const year = extra ? field({ label: 'Year', type: 'number', value: vehicle.year ?? '', attrs: { inputmode: 'numeric', min: 1950, max: new Date().getFullYear() + 1, name: 'year' }, onSurface }) : null;
+  const reg = extra ? field({ label: 'Registration', value: vehicle.reg || '', attrs: { maxlength: 15, autocapitalize: 'characters', name: 'reg', style: 'text-transform:uppercase' }, onSurface, support: 'Like MH12 AB 1234' }) : null;
   let typeTouched = !!vehicle.type;
   let type = vehicle.type || inferType(vehicle.make, vehicle.model) || '';
   const typeSel = h('select', { 'aria-label': 'Type', name: 'type' }, h('option', { value: '' }, 'Choose…'), Object.entries(TYPES).map(([k, t]) => h('option', { value: k, selected: k === type }, t.label)));
@@ -46,10 +50,11 @@ export function bikeForm({ vehicle = {}, onSurface = false } = {}) {
   onMakeModel();
 
   const el = h('div', { class: 'stack gap16' }, makeList, modelList, preview, h('div', { class: 'row gap8', style: 'flex-wrap:wrap' }, photoBtn, removeBtn), hint, fileIn,
-    make, model, typeField, odo);
+    make, model, typeField, odo, extra ? h('div', { class: 'row gap12' }, h('div', { class: 'grow' }, year), h('div', { class: 'grow', style: 'flex:1.6' }, reg)) : null, nick);
   return {
     el,
-    value: () => ({ type: type || null, make: make.input.value, model: model.input.value, odometer: odo.input.value }),
+    value: () => ({ type: type || null, make: make.input.value, model: model.input.value, odometer: odo.input.value,
+      ...(extra ? { year: year.input.value, reg: reg.input.value.replace(/\s+/g, ' ').trim(), nickname: nick.input.value } : {}) }),
     photo: () => photoB64,
     removePhoto: () => removePhoto,
     setError: (msg) => odo.setError(msg),
@@ -62,4 +67,14 @@ export async function saveBike(api, form) {
   if (form.photo()) ({ user } = await api.post('/api/me/photo', { data: form.photo() }));
   else if (form.removePhoto()) ({ user } = await api.del('/api/me/photo'));
   return user;
+}
+
+/** Add (vid = null) or edit one vehicle from the Garage, with its photo. Returns the garage state. */
+export async function saveVehicle(api, form, vid, { makeActive } = {}) {
+  let g = vid ? await api.patch(`/api/vehicles/${vid}`, form.value()) : await api.post('/api/vehicles', { ...form.value(), makeActive });
+  const id = g.vehicle.id;
+  if (form.photo()) await api.post(`/api/vehicles/${id}/photo`, { data: form.photo() });
+  else if (form.removePhoto()) await api.del(`/api/vehicles/${id}/photo`);
+  if (form.photo() || form.removePhoto()) g = await api.get('/api/vehicles');
+  return { ...g, vehicle: g.vehicles.find((v) => v.id === id) };
 }

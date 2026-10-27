@@ -1,6 +1,7 @@
 // 13 Start a ride · 5 steps (Figma: Navigation map → "Start a ride · 5 steps")
 //   1 How are you riding?  Solo · Group · Quick ride (Quick goes straight to the hub)
-//   2 Solo: pillion?        Group: your group, riders ready, mic check
+//   2 Solo: pillion? (19)   Group: 15 your group or 16 Nearby → 17 select riders → 18 ready + mic check
+//   4 Where to: 22 search or 22e drop a pin
 //   3 Checklist             4 Where to             5 Route → 25 Ride hub
 import { h, store, localDate, haversine, fmtKm, etaShort, fmtDist } from '../util.js';
 import { api } from '../api.js';
@@ -50,6 +51,7 @@ register('setup', (el, params) => {
   const plan = ctx.plan = {
     mode: params.mode || (params.quickDest ? (ctx.group ? 'group' : 'solo') : null),
     pillion: false, dest: params.quickDest || null, route: null, options: null, sel: 0,
+    riders: null, // 17 Select riders: Set of user ids (null = everyone online)
   };
   let step = 0;
   let cleanupStep = null;
@@ -58,7 +60,7 @@ register('setup', (el, params) => {
   const caption = h('div', { class: 'step-caption label-l variant' });
   const content = h('div', { style: 'flex:1;min-height:0;display:flex;flex-direction:column;position:relative;overflow:hidden' });
   el.append(head, stepsBar, caption, content);
-  const firstStep = params.checkOnly ? 3 : params.step || 1;
+  const firstStep = params.checkOnly ? 3 : params.step || (params.mode ? 2 : 1);
 
   const go = (n) => {
     const dir = n >= step ? 'fwd' : 'back';
@@ -87,7 +89,7 @@ register('setup', (el, params) => {
   const prevStep = (n) => (n === 4 && params.checkOnly ? 3 : n - 1);
 
   const startRide = (opts = {}) => {
-    engine.startRide({ solo: plan.mode !== 'group', ...opts });
+    engine.startRide({ solo: plan.mode !== 'group', pillion: plan.pillion, riders: plan.riders ? [...plan.riders] : null, ...opts });
     push('ride', {}, { replace: true });
   };
 
@@ -144,12 +146,16 @@ register('setup', (el, params) => {
             h('span', { class: 'avatar' }, ic('groups')), h('span', { class: 'main' }, h('span', { class: 'body-l' }, grp.name), h('span', { class: 'body-m variant' }, `${grp.members.length} ${grp.members.length === 1 ? 'rider' : 'riders'}`)),
             ic(sel ? 'radio_button_checked' : 'radio_button_unchecked', { fill: sel }));
         })),
-        g ? h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Riders', h('span', { class: 'count label-m' }, `${on.length} of ${g.members.length} ready`)) : null,
-        g ? h('div', { class: 'list' }, g.members.map((m) => {
+        h('button', { type: 'button', class: 'shortcut', style: 'margin:8px 0 0', onclick: () => push('nearby', { fromSetup: true }) }, ic('nearby'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Riders nearby'), h('span', { class: 'body-s variant' }, 'Ride with people right here, no code')), ic('chevron_right')),
+        g ? h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Who’s riding today', h('span', { class: 'count label-m' }, `${on.length} of ${g.members.length} ready`)) : null,
+        g ? h('div', { class: 'list', 'data-select-riders': '' }, g.members.map((m) => {
           const me = m.id === ctx.user.id, ready = m.online || me;
-          return h('div', { class: 'rider-row' }, avatar(m.name, { status: ready ? 'connected' : 'off' }),
-            h('span', { class: 'main' }, h('span', { class: 'body-l' }, me ? `${m.name} (you)` : m.name), h('span', { class: 'body-m variant' }, me ? 'Ready' : m.online ? 'Online' : 'Not in the app yet')),
-            ready ? h('span', { class: 'status compact ok' }, ic('check_circle'), 'Ready') : h('span', { class: 'label-m variant' }, 'Will join'));
+          if (!plan.riders || plan.ridersGroup !== g.id) { plan.riders = new Set(on.map((x) => x.id)); plan.ridersGroup = g.id; }
+          const picked = me || plan.riders.has(m.id);
+          return h('label', { class: `rider-row${picked ? ' picked' : ''}`, style: 'cursor:pointer', 'data-rider': m.id }, avatar(m.name, { status: ready ? 'connected' : 'off', color: m.color }),
+            h('span', { class: 'main' }, h('span', { class: 'body-l' }, me ? `${m.name} (you)` : m.name), h('span', { class: 'body-m variant' }, me ? 'Ready' : m.online ? 'Online · gets your ride invite' : 'Not in the app yet · gets the invite when they open it')),
+            me ? h('span', { class: 'status compact ok' }, ic('check_circle'), 'Ready')
+              : checkbox({ checked: picked, label: `${m.name} rides today`, onchange: (v) => { v ? plan.riders.add(m.id) : plan.riders.delete(m.id); render(); } }));
         })) : null,
         h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Mic check'),
         h('div', { class: 'mini-meter' }, ic('headset_mic'), h('div', { class: 'progress-linear' }, meter), micLabel),
@@ -213,7 +219,8 @@ register('setup', (el, params) => {
       trail: ctx.pos ? fmtDist(haversine([ctx.pos.lat, ctx.pos.lng], [p.lat, p.lng])).replace('now', '0 m') : null,
       onclick: () => pickPlace(p),
     });
-    const showDefault = () => results.replaceChildren(
+    const pinRow = listItem({ icon: 'pin_drop', title: 'Choose on map', sub: 'Drop a pin anywhere', trail: ic('chevron_right'), onclick: () => push('pin', { title: 'Where to?', start: plan.dest, onPick: (p) => setTimeout(() => pickPlace(p), 320) }), attrs: { 'data-pin': '' } });
+    const showDefault = () => results.replaceChildren(pinRow,
       plan.dest ? h('div', { class: 'section-label title-s', style: 'padding-left:16px' }, 'Selected') : null,
       plan.dest ? placeRow(plan.dest, 'location_on') : null,
       plan.mode === 'group' && ctx.group?.plan ? h('div', { class: 'section-label title-s', style: 'padding-left:16px' }, 'Group plan') : null,

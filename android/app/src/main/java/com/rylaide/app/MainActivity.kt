@@ -91,9 +91,16 @@ class MainActivity : Activity() {
     private fun load(i: Intent?) {
         hideSetup()
         val base = serverUrl
-        // rylaide://join/ABC123 → /?join=ABC123
-        val code = i?.data?.takeIf { it.scheme == "rylaide" }?.lastPathSegment
-        web.loadUrl(if (code != null) "$base/?join=${Uri.encode(code)}" else "$base/")
+        // Deep links (Figma: Implementation notes): rylaide://join/ABC123 · rylaide://group/{id} · rylaide://ride
+        val d = i?.data?.takeIf { it.scheme == "rylaide" }
+        val seg = d?.lastPathSegment?.let { Uri.encode(it) }
+        val query = when (d?.host) {
+            "join" -> if (seg != null) "?join=$seg" else ""
+            "group" -> if (seg != null) "?group=$seg" else ""
+            "ride" -> "?open=ride"
+            else -> ""
+        }
+        web.loadUrl("$base/$query")
     }
 
     override fun onNewIntent(intent: Intent?) {

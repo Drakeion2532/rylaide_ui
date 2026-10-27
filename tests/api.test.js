@@ -28,6 +28,7 @@ async function api(method, p, body, tok) {
   let json; try { json = JSON.parse(text); } catch { json = text; }
   return { status: r.status, body: json };
 }
+const veh = (v) => { const { id: _i, year: _y, reg: _r, nickname: _n, ...rest } = v || {}; return rest; };
 const signup = async (name) => (await api('POST', '/api/users', { name, bike: 'scooter' })).body;
 
 function socket(tok) {
@@ -81,7 +82,7 @@ test('sign up validation and profile updates', async () => {
   assert.equal(p.body.user.token, undefined, 'token never leaks in user objects');
   assert.equal((await api('PATCH', '/api/me', { vehicle: { make: 'RE', odometer: 'lots' } }, a.token)).status, 400);
   const v = await api('PATCH', '/api/me', { vehicle: { make: ' Royal Enfield ', model: 'Classic 350', odometer: '31220.4' } }, a.token);
-  assert.deepEqual(v.body.user.vehicle, { type: null, make: 'Royal Enfield', model: 'Classic 350', odometer: 31220, photo: null });
+  assert.deepEqual(veh(v.body.user.vehicle), { type: null, make: 'Royal Enfield', model: 'Classic 350', odometer: 31220, photo: null });
   const withBike = (await api('POST', '/api/users', { name: 'Kiran', vehicle: { make: 'Bajaj', model: 'Dominar 400' } })).body;
   assert.equal(withBike.user.vehicle.model, 'Dominar 400');
 });
@@ -324,7 +325,7 @@ test('bike: type, make and model, owner photo upload, serve, replace, delete', a
   const r = await api('POST', '/api/users', { name: 'Owner', vehicle: { type: 'ev-scooter', make: 'Ather', model: '450X', odometer: 1200 } });
   assert.ok(r.status < 300, `signup ${r.status}`);
   const tok = r.body.token;
-  assert.deepEqual(r.body.user.vehicle, { type: 'ev-scooter', make: 'Ather', model: '450X', odometer: 1200, photo: null });
+  assert.deepEqual(veh(r.body.user.vehicle), { type: 'ev-scooter', make: 'Ather', model: '450X', odometer: 1200, photo: null });
   // unknown type is dropped, not trusted
   assert.equal((await api('PATCH', '/api/me', { vehicle: { type: 'tank', make: 'X' } }, tok)).body.user.vehicle.type, null);
   assert.equal((await api('PATCH', '/api/me', { vehicle: { type: 'bicycle', make: 'Hercules', model: 'Roadeo' } }, tok)).status, 200);

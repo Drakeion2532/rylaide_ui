@@ -1,8 +1,9 @@
-// 01 Splash → 02–04 Onboarding → 06 Create account → 07a Bike → 07b Permissions → 08 Home
-import { h } from '../util.js';
+// 01 Splash → 02–04 Onboarding → 04b Before you start → 05 Sign in or 06 Create account → 07a Bike → 07b Permissions → 08 Home
+import { h, store } from '../util.js';
 import { api } from '../api.js';
 import { ctx } from '../state.js';
-import { ic, button, field, withLoading, iconButton, snackbar } from '../ui.js';
+import { ic, button, field, withLoading, iconButton, snackbar, sheet, checkbox, page } from '../ui.js';
+import { TERMS_SUMMARY, TERMS, PRIVACY, SUPPORT_EMAIL } from '../legal.js';
 import { bikeForm } from '../bikeform.js';
 import { register, push, back } from '../router.js';
 import { getMic } from '../voice.js';
@@ -18,8 +19,9 @@ register('welcome', (el) => {
   const art = h('div', { class: 'onb-art' });
   const text = h('div', { class: 'onb-text' });
   const dots = h('div', { class: 'page-dots', 'aria-hidden': 'true' }, PAGES.map(() => h('i')));
-  const next = button('Next', { size: 'large', wide: true, onclick: () => (i < PAGES.length - 1 ? show(i + 1) : push('profile')) });
-  const skip = button('Skip', { style: 'text', onclick: () => push('profile') });
+  const next = button('Next', { size: 'large', wide: true, onclick: () => (i < PAGES.length - 1 ? show(i + 1) : push('terms')) });
+  const skip = button('Skip', { style: 'text', onclick: () => push('terms') });
+  const signin = button('I already have an account', { style: 'text', onclick: () => push('signin') });
   const show = (n) => {
     i = n;
     art.style.backgroundImage = `url(${PAGES[n].img})`;
@@ -27,12 +29,13 @@ register('welcome', (el) => {
     text.style.animation = 'none'; void text.offsetWidth; text.style.animation = '';
     dots.querySelectorAll('i').forEach((d, k) => d.classList.toggle('on', k === n));
     next.lastChild.textContent = n === PAGES.length - 1 ? 'Get started' : 'Next';
+    skip.hidden = n === PAGES.length - 1; signin.hidden = n !== PAGES.length - 1;
   };
   // swipe between pages
   let x0 = null;
   el.addEventListener('pointerdown', (e) => (x0 = e.clientX));
   el.addEventListener('pointerup', (e) => { if (x0 === null) return; const dx = e.clientX - x0; if (dx < -50 && i < PAGES.length - 1) show(i + 1); if (dx > 50 && i > 0) show(i - 1); x0 = null; });
-  el.append(h('div', { class: 'screen-body' }, art, text, dots), h('div', { class: 'screen-foot stack gap8' }, next, skip));
+  el.append(h('div', { class: 'screen-body' }, art, text, dots), h('div', { class: 'screen-foot stack gap8' }, next, skip, signin));
   show(0);
 });
 
@@ -47,7 +50,7 @@ register('profile', (el) => {
     await withLoading(go, async () => {
       try {
         const v = bike.value();
-        const r = await api.post('/api/users', { name: name.input.value, bike: v.type || 'motorcycle', vehicle: v.make || v.model || v.type ? v : null });
+        const r = await api.post('/api/users', { name: name.input.value, bike: v.type || 'motorcycle', vehicle: v.make || v.model || v.type ? v : null, agreed: !!store.get('termsAt') });
         api.setToken(r.token);
         ctx.user = r.user;
         if (bike.photo()) { try { ctx.user = (await api.post('/api/me/photo', { data: bike.photo() })).user; } catch (err) { snackbar(err.message); } }
@@ -85,4 +88,65 @@ register('permissions', (el) => {
         card('mic', 'Microphone', 'For talking to your group through your headset.', 'mic', askMic),
         card.err)),
     h('div', { class: 'screen-foot' }, button('Continue', { size: 'large', wide: true, onclick: () => window.dispatchEvent(new CustomEvent('rylaide:start', { detail: { fresh: true } })) })));
+});
+
+// ---------------------------------------------------------------- 04b Before you start
+register('terms', (el) => {
+  const { body } = page(el, '', { back });
+  let ok = false;
+  const go = button('Agree and continue', { size: 'large', wide: true, disabled: true, onclick: () => { store.set('termsAt', Date.now()); push('profile'); } });
+  const box = checkbox({ label: 'I agree to the Terms of use and Privacy notice', onchange: (v) => { ok = v; go.disabled = !ok; } });
+  body.append(
+    h('h1', { class: 'headline-m', style: 'margin:0 0 4px' }, 'Before you start'),
+    h('p', { class: 'body-m variant', style: 'margin-bottom:16px' }, 'Four things every Rylaide rider should know.'),
+    h('div', { class: 'stack gap12' }, TERMS_SUMMARY.map(([icon, t, d]) => h('div', { class: 'perm-card' }, ic(icon), h('div', { class: 'main' }, h('span', { class: 'title-m' }, t), h('span', { class: 'body-m variant' }, d))))),
+    h('div', { class: 'row gap8', style: 'margin:16px 0 8px;flex-wrap:wrap' },
+      button('Terms of use', { style: 'text', icon: 'description', onclick: () => push('legal', { doc: 'terms' }) }),
+      button('Privacy notice', { style: 'text', icon: 'policy', onclick: () => push('legal', { doc: 'privacy' }) })),
+    h('label', { class: 'list-item switch-row', style: 'border-radius:16px;background:var(--surface-container);cursor:pointer' }, box, h('span', { class: 'main' }, h('span', { class: 'body-l wrap' }, 'I agree to the Terms of use and Privacy notice'))));
+  el.append(h('div', { class: 'screen-foot' }, go));
+});
+
+// ---------------------------------------------------------------- 56 Terms of use · 57 Privacy (also from Settings → About)
+register('legal', (el, params) => {
+  const doc = params.doc === 'privacy' ? PRIVACY : TERMS;
+  const { body } = page(el, params.doc === 'privacy' ? 'Privacy notice' : 'Terms of use', { back });
+  body.append(h('p', { class: 'body-s variant', style: 'margin:0 0 16px' }, 'Prototype text in plain language. Last updated October 2026.'),
+    doc.map(([t, d]) => h('section', { style: 'margin-bottom:20px' }, h('h2', { class: 'title-m', style: 'margin:0 0 6px' }, t), h('p', { class: 'body-m variant', style: 'margin:0' }, d))),
+    h('p', { class: 'body-m', style: 'margin:8px 0 32px' }, 'Questions? ', h('a', { href: `mailto:${SUPPORT_EMAIL}` }, SUPPORT_EMAIL)));
+});
+
+// ---------------------------------------------------------------- 05 Sign in (account code from your other phone)
+register('signin', (el) => {
+  const { body } = page(el, '', { back });
+  const codeF = field({ label: 'Account code', attrs: { maxlength: 9, autocapitalize: 'characters', autocomplete: 'one-time-code', spellcheck: 'false', style: 'text-transform:uppercase;letter-spacing:3px;font-size:22px' }, support: '8 letters and numbers, like K7QM-4XPA' });
+  codeF.input.addEventListener('input', () => {
+    const raw = codeF.input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    codeF.input.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+    codeF.setError('');
+  });
+  const go = button('Sign in', { size: 'large', wide: true, type: 'submit' });
+  const help = () => sheet(() => h('div', { class: 'stack gap12' },
+    h('h2', { class: 'headline-s' }, 'Find your account code'),
+    h('ol', { class: 'body-m', style: 'margin:0;padding-left:20px;line-height:1.7' },
+      h('li', {}, 'Open Rylaide on your old phone.'), h('li', {}, 'Go to Settings → Account.'), h('li', {}, 'Your code is under “Sign in on another phone”.')),
+    h('p', { class: 'body-m variant' }, 'Lost the old phone? Email us from the address you want to use and tell us your name and group. We’ll help you get back in.'),
+    h('a', { class: 'btn tonal', href: `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Rylaide: I can’t find my account code')}` }, ic('mail', { size: 18 }), `Email ${SUPPORT_EMAIL}`)));
+  body.append(
+    h('h1', { class: 'headline-m', style: 'margin:8px 0 4px' }, 'Welcome back'),
+    h('p', { class: 'body-m variant', style: 'margin-bottom:24px' }, 'Enter the account code from Settings → Account on your other phone. Your rides, bikes and groups come with you.'),
+    h('form', { class: 'stack gap16', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      if (codeF.input.value.replace('-', '').length < 8) return codeF.setError('Enter all 8 characters.');
+      await withLoading(go, async () => {
+        try {
+          const r = await api.post('/api/signin', { code: codeF.input.value });
+          api.setToken(r.token); ctx.user = r.user; store.set('user', r.user); store.set('termsAt', Date.now());
+          window.dispatchEvent(new CustomEvent('rylaide:start', { detail: { welcomeBack: true } }));
+        } catch (err) { codeF.setError(err.message); }
+      });
+    } }, codeF, go, button('Can’t find your code?', { style: 'text', onclick: help })),
+    h('div', { class: 'divider', style: 'margin:24px 0' }),
+    h('p', { class: 'body-m variant' }, 'New to Rylaide? ', h('button', { type: 'button', class: 'btn text', style: 'padding:0 4px;height:auto', onclick: () => push('terms', {}, { replace: true }) }, 'Create an account')));
+  setTimeout(() => codeF.input.focus(), 350);
 });

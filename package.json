@@ -5,7 +5,7 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "node --test tests/api.test.js tests/db.test.js",
+    "test": "node --test tests/api.test.js tests/features.test.js tests/db.test.js",
     "test:e2e": "bash scripts/e2e.sh",
     "test:all": "npm test && npm run test:e2e",
     "build:icons": "python3 scripts/build-icons.py"

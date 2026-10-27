@@ -1,4 +1,4 @@
-// 25r Ride hub (Map · Speed · Group) · 25 Full-screen map · 30 SOS countdown
+// 25r Ride hub (Map · Speed · Group) · 25u with pillion (Map · Speed · Pillion) · 25 Full-screen map · 30 SOS countdown
 import { h, fmtDist, fmtKm, fmtEta, haversine, store, vibrate } from '../util.js';
 import { ctx, onMany } from '../state.js';
 import { ic, button, iconButton, avatar, connectionStatus, segmented, rideControl, switchEl, ring, dialog, snackbar, sheet, listItem } from '../ui.js';
@@ -99,7 +99,9 @@ async function confirmEnd() {
 // ---------------------------------------------------------------- ride hub
 register('ride', (el) => {
   if (!ctx.ride) { setTimeout(() => tab('home'), 0); return; }
+  const third = ctx.ride.pillion && ctx.ride.solo ? 'pillion' : 'group';
   let view = store.get('hubView', 'map');
+  if (view === 'group' || view === 'pillion') view = third;
   let map = null;
   const timer = h('span', { class: 'title-l tabular' });
   const chips = h('div', { class: 'hub-chips' });
@@ -111,10 +113,10 @@ register('ride', (el) => {
     listItem({ icon: 'forum', title: 'Group chat', onclick: () => { close(); if (ctx.group) push('group', { id: ctx.group.id }); } }),
     listItem({ icon: 'stop_circle', title: 'End ride', onclick: () => { close(); confirmEnd(); } }))) });
   const end = button('End ride', { style: 'danger-outlined', icon: 'stop_circle', onclick: confirmEnd });
-  const seg = segmented([{ value: 'map', label: 'Map' }, { value: 'speed', label: 'Speed' }, { value: 'group', label: 'Group' }], view, (v) => { view = v; store.set('hubView', v); render(); }, { label: 'Ride view' });
+  const seg = segmented([{ value: 'map', label: 'Map' }, { value: 'speed', label: 'Speed' }, third === 'pillion' ? { value: 'pillion', label: 'Pillion' } : { value: 'group', label: 'Group' }], view, (v) => { view = v; store.set('hubView', v); render(); }, { label: 'Ride view' });
   const content = h('div', { class: 'hub-content' });
   const bannerHost = h('div', { 'data-banner-host': '', style: 'padding:0 16px' });
-  let controls = rideControls({ onRiders: () => { seg.set('group'); view = 'group'; render(); } });
+  let controls = rideControls({ onRiders: () => { seg.set(third); view = third; render(); } });
   el.append(
     h('div', { class: 'hub-top' },
       iconButton('keyboard_arrow_down', { label: 'Minimise ride', style: 'tonal', onclick: () => tab('home') }),
@@ -220,13 +222,37 @@ register('ride', (el) => {
       h('div', { class: 'list' }, listItem({ icon: 'campaign', title: 'Voice chat', sub: ctx.voiceOn ? 'On · your group can hear you' : 'Off · you won’t hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); render(); } }) }))));
   };
 
+  // 25u Pillion: who's on the back, break reminders, comfort
+  const pillionView = () => {
+    const r = ctx.ride;
+    const name = store.get('pillionName', '');
+    const mins = Math.max(0, Math.round((r.nextBreak - Date.now()) / 60000));
+    const ridden = Math.round((Date.now() - r.startedAt) / 60000);
+    const nameIn = h('input', { value: name, placeholder: 'Pillion’s name', maxlength: 30, 'aria-label': 'Pillion’s name', class: 'inline-input', onchange: (e) => store.set('pillionName', e.target.value.trim()) });
+    content.replaceChildren(h('div', { class: 'screen-body', style: 'margin:0 -16px;padding:0 16px' },
+      h('div', { class: 'list' },
+        h('div', { class: 'rider-row' }, avatar(ctx.user.name, { status: 'connected', size: 'l', accent: true }), h('span', { class: 'main' }, h('span', { class: 'body-l' }, 'You'), h('span', { class: 'body-m variant' }, 'Riding'))),
+        h('div', { class: 'rider-row' }, avatar(name || 'P', { status: 'connected', size: 'l' }), h('span', { class: 'main' }, nameIn, h('span', { class: 'body-m variant' }, 'Pillion · on the back')))),
+      h('div', { class: 'break-card mt16' },
+        h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' },
+          h('div', {}, h('div', { class: 'label-m variant' }, 'Next break'), h('div', { class: 'ride-metric' }, mins ? `in ${mins} min` : 'now')),
+          h('div', { style: 'text-align:right' }, h('div', { class: 'label-m variant' }, 'Riding for'), h('div', { class: 'title-l' }, `${ridden} min`))),
+        h('div', { class: 'progress-linear', style: 'margin-top:12px' }, h('i', { style: `width:${Math.min(100, 100 - (mins / store.get('breakMins', 45)) * 100)}%` })),
+        h('div', { class: 'row gap8 mt16' },
+          button('Taking a break', { style: 'tonal', icon: 'free_breakfast', onclick: () => { engine.snoozeBreak(store.get('breakMins', 45)); snackbar('Break logged. Next reminder set.'); render(); } }),
+          button('+15 min', { style: 'text', onclick: () => { engine.snoozeBreak(Math.max(15, mins + 15)); render(); } }))),
+      h('div', { class: 'list mt16' },
+        listItem({ icon: 'headset_mic', title: 'Talk to your pillion', sub: 'Pair both helmet headsets with each other over Bluetooth (rider-to-pillion mode). Rylaide’s voice prompts play in yours.' }),
+        listItem({ icon: 'speed', title: 'Smooth riding', sub: 'Brake and accelerate gently, and warn before bumps. Two up, braking takes longer.' }))));
+  };
+
   const render = () => {
     map?.destroy(); map = null; strip = null; gauge = null;
     controls.cleanup?.();
-    const fresh = rideControls({ onRiders: () => { seg.set('group'); view = 'group'; render(); } });
+    const fresh = rideControls({ onRiders: () => { seg.set(third); view = third; render(); } });
     controls.replaceWith(fresh); controls = fresh;
     renderChips();
-    ({ map: mapView, speed: speedView, group: groupView })[view]();
+    ({ map: mapView, speed: speedView, group: groupView, pillion: pillionView })[view]();
   };
   render();
 
@@ -234,6 +260,7 @@ register('ride', (el) => {
     pos: (p) => { map?.setMe(p); if (speedBubble && strip) speedBubble.querySelector('b').textContent = speedKmh(); if (gauge) { gauge.set(speedKmh()); gauge.stats(); } },
     nav: () => { if (view === 'map') updateMapView(); },
     'ride-tick': () => { if (view === 'map') updateMapView(); },
+    break: () => { if (view === 'pillion') render(); },
     track: (pts) => map?.setTrack(pts),
     route: (r) => map?.setRoutes([r], 0, { fit: false, labels: false }),
     loc: (l) => { map?.upsertRider(l, { sos: ctx.sos.has(l.userId) }); if (view === 'group') groupView(); },
@@ -244,7 +271,6 @@ register('ride', (el) => {
     speaking: () => { if (view === 'group') groupView(); },
     talking: () => { if (view === 'group') groupView(); },
     conn: renderChips, gps: renderChips, weather: () => view === 'map' && updateMapView(),
-    arrived: (d) => snackbar(`You’ve arrived at ${engine.short(d.name)}`, { action: { label: 'End ride', run: confirmEnd }, ms: 10000 }),
     ride: (r) => { if (!r && current()?.name === 'ride') tab('home'); },
   });
   const staleT = setInterval(() => map?.markStale(STALE), 15000);
@@ -305,7 +331,7 @@ register('ridemap', (el, params) => {
 });
 
 // ---------------------------------------------------------------- SOS countdown
-register('sos', (el) => {
+register('sos', (el, params) => {
   el.classList.add('sos-screen');
   el.dataset.blockBack = '1';
   const SECS = 5;
@@ -360,5 +386,6 @@ register('sos', (el) => {
   };
   sendNow.onclick = send;
   setTimeout(() => { const top = current(); if (top?.name === 'sos') top.onBackBlocked = () => snackbar('Tap “I’m OK, cancel” to leave this screen.'); }, 0);
+  if (params.now) setTimeout(send, 0); // from 30a crash detection: the countdown already ran
   return () => clearInterval(t);
 });

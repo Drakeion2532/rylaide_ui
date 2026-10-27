@@ -41,6 +41,9 @@ function startMockUpstream() {
         { display_name: `${q} Fort, Maharashtra, India`, lat: '18.3663', lon: '73.7559' },
       ]));
     }
+    if (url.pathname === '/reverse') {
+      return res.end(JSON.stringify({ display_name: 'Sinhagad Ghat Road, Donje, Pune, Maharashtra, India' }));
+    }
     if (url.pathname === '/weather') {
       return res.end(JSON.stringify({ properties: { timeseries: [{ data: {
         instant: { details: { air_temperature: 27.4, wind_speed: 3.1 } },

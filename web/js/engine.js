@@ -102,6 +102,35 @@ export function wireRealtime() {
   rt.on('sos', (m) => onSos(m.alert));
   rt.on('sos_cancel', (m) => { ctx.sos.delete(m.userId); emit('sos-cancel', m.userId); });
   rt.on('error', (m) => emit('snack', m.error));
+  // Removed by the leader, or the group was deleted.
+  rt.on('group_gone', (m) => {
+    ctx.groups = ctx.groups.filter((g) => g.id !== m.groupId);
+    if (ctx.group?.id === m.groupId) openGroup(ctx.groups[0] || null);
+    emit('groups', ctx.groups);
+    emit('group-gone', m);
+    emit('snack', m.why === 'removed' ? `You were removed from ${m.name}` : `${m.name} was deleted by its leader`);
+  });
+  // Made a group with you from Nearby.
+  rt.on('group_added', (m) => {
+    if (!ctx.groups.some((g) => g.id === m.group.id)) ctx.groups.push(m.group);
+    openGroup(m.group);
+    emit('groups', ctx.groups);
+    emit('snack', `${m.by} added you to ${m.group.name}`);
+  });
+  // A rider started a group ride and picked you (17 Select riders).
+  rt.on('ride_live', (m) => emit('ride-live', m));
+  rt.on('expenses', (m) => emit('group-data', { kind: 'expenses', groupId: m.groupId }));
+  rt.on('shared', (m) => emit('group-data', { kind: 'shared', groupId: m.groupId }));
+}
+
+/** Refresh one group's details (members, live ride) from the server. */
+export async function refreshGroup(gid) {
+  const { group } = await api.get(`/api/groups/${gid}`);
+  const i = ctx.groups.findIndex((g) => g.id === gid);
+  if (i >= 0) ctx.groups[i] = group;
+  if (ctx.group?.id === gid) { Object.assign(ctx.group, group); emit('group', ctx.group); }
+  emit('groups', ctx.groups);
+  return group;
 }
 
 function onLoc(loc) {
@@ -183,17 +212,72 @@ setInterval(loadWeather, 5 * 60e3);
 
 // ---------------------------------------------------------------- ride
 /** Begin a ride from the setup flow (or a quick ride with no destination). */
-export function startRide({ dest = null, route = null, solo = !ctx.group } = {}) {
+export function startRide({ dest = null, route = null, solo = !ctx.group, pillion = false, riders = null, quick = false } = {}) {
   ctx.ride = {
     startedAt: Date.now(), points: ctx.pos ? [[ctx.pos.lat, ctx.pos.lng, Date.now()]] : [], dist: 0, maxSpeed: 0,
     dest, route, k: route ? Math.min(1, route.steps.length - 1) : 0, spoken: {}, off: 0, lastReroute: 0,
-    solo, groupName: solo ? null : ctx.group?.name || null, origin: ctx.originName || null,
+    solo, groupName: solo ? null : ctx.group?.name || null, groupId: solo ? null : ctx.group?.id || null, origin: ctx.originName || null,
+    pillion: !!pillion, quick, vehicleId: ctx.user?.vehicle?.id || null, nextBreak: Date.now() + setting('breakMins', 45) * 60e3,
   };
   store.set('activeRide', { startedAt: ctx.ride.startedAt });
   requestWakeLock();
+  crash.start();
+  // Group ride: tell the riders picked in 17 Select riders (they get "… started a ride · Join").
+  if (!solo && ctx.group) {
+    api.post(`/api/groups/${ctx.group.id}/ride`, { riders: riders || onlineRiders().map((m) => m.id), destination: dest ? short(dest.name) : null, lat: dest?.lat, lng: dest?.lng }).catch(() => {});
+  }
   if (route) speak(`Starting navigation to ${short(dest.name)}. ${route.steps[ctx.ride.k]?.instruction || ''}`);
   emit('ride', ctx.ride);
 }
+
+/** 32 Arrived → Keep riding: stop directions, keep recording. */
+export function keepRiding() {
+  const r = ctx.ride;
+  if (!r) return;
+  r.route = null; r.keptRiding = true;
+  emit('nav', null); emit('ride', r);
+}
+
+// ---------------------------------------------------------------- 25u pillion: break reminders
+setInterval(() => {
+  const r = ctx.ride;
+  if (!r || !(r.pillion || setting('breaks', false)) || Date.now() < r.nextBreak) return;
+  r.nextBreak = Date.now() + setting('breakMins', 45) * 60e3;
+  speak(r.pillion ? 'Time for a short break. Check on your pillion.' : 'Time for a short break.');
+  vibrate([200, 100, 200]);
+  emit('banner', { tone: 'warn', icon: 'free_breakfast', title: 'Time for a break', sub: r.pillion ? 'Stop safely, stretch and check on your pillion' : 'Stop safely and stretch for a few minutes', ms: 15000 });
+  emit('break', r);
+}, 15000);
+export function snoozeBreak(mins) { if (ctx.ride) { ctx.ride.nextBreak = Date.now() + mins * 60e3; emit('break', ctx.ride); } }
+
+// ---------------------------------------------------------------- 30a crash detection
+// A hard impact (over ~3.5 g) while moving, followed by the bike staying still, opens a countdown.
+// If the rider doesn't cancel it, SOS goes to the group and the emergency contacts screen opens.
+export const crash = {
+  on: false, armed: true, lastSpeed: 0,
+  start() {
+    if (this.on || !setting('crash', true)) return;
+    this.on = true;
+    this.handler = (e) => {
+      const a = e.accelerationIncludingGravity || e.acceleration;
+      if (!a || !ctx.ride) return;
+      const g = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2) / 9.81;
+      if (g > 3.5 && this.armed && (ctx.pos?.speed ?? 0) * 3.6 >= 15) this.suspect(g);
+    };
+    window.addEventListener('devicemotion', this.handler);
+  },
+  stop() { if (this.handler) window.removeEventListener('devicemotion', this.handler); this.on = false; this.handler = null; },
+  suspect(g, { test = false } = {}) {
+    this.armed = false;
+    const before = Math.round((ctx.pos?.speed || 0) * 3.6);
+    // Wait a few seconds: a real crash leaves the bike stopped; a pothole doesn't.
+    setTimeout(() => {
+      const still = test || !ctx.pos || !Number.isFinite(ctx.pos.speed) || ctx.pos.speed < 1.5;
+      if (still && (ctx.ride || test)) emit('crash', { g: +g.toFixed(1), before, test, at: Date.now() });
+      setTimeout(() => (this.armed = true), 60e3);
+    }, test ? 0 : 6000);
+  },
+};
 
 function updateRide(pos) {
   const r = ctx.ride;
@@ -218,11 +302,14 @@ export async function endRide() {
   ctx.ride = null;
   store.del('activeRide');
   releaseWakeLock();
+  crash.stop();
+  if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
   const duration = (Date.now() - r.startedAt) / 1000;
   const payload = {
     points: r.points, duration, maxSpeed: r.maxSpeed, startedAt: r.startedAt,
     destination: r.dest ? short(r.dest.name) : null, origin: r.origin, groupName: r.groupName,
+    groupId: r.groupId, vehicleId: r.vehicleId, pillion: r.pillion,
   };
   if (r.points.length < 2 || r.dist < 50) return { tooShort: true, duration, distance: Math.round(r.dist) };
   try {

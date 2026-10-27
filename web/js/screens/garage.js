@@ -1,4 +1,4 @@
-// 12 Garage → 11d Fuel log · 43 Settings → Appearance, Riding, Emergency contacts, Mic test
+// 11d Fuel log · 51 Emergency contacts · Mic test · Home's quick bike editor (Garage tab and vehicles: vehicles.js; Settings: settings.js)
 import { h, fmtInt, store, localDate, native } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, emit, setting, setSetting, onMany } from '../state.js';
@@ -25,40 +25,10 @@ export function editBikeSheet() {
   });
 }
 
-register('garage', (el) => {
-  const bar = h('header', { class: 'topbar' }, h('h1', { class: 'title title-l', style: 'padding-left:12px' }, 'Garage'), iconButton('settings', { label: 'Settings', onclick: () => push('settings') }));
-  const body = h('div', { class: 'screen-body pad' });
-  el.append(bar, body);
-  liftOnScroll(bar, body);
-  const render = (fuel) => {
-    const v = ctx.user?.vehicle || {};
-    const parked = store.get('parking', null);
-    body.replaceChildren(
-      h('section', { class: 'hero', style: `min-height:260px;max-height:300px;background-image:url("${heroImage(v)}")` },
-        h('span', { class: 'tag-glass label-m' }, ic('two_wheeler'), 'My ride'),
-        iconButton('edit', { label: 'Edit bike', style: 'glass', small: true, onclick: editBikeSheet, attrs: { class: 'icon-btn glass small swap' } }),
-        h('div', { class: 'info' }, h('div', {}, h('div', { class: 'title-s make' }, [v.make, TYPES[vehicleType(v)].label].filter(Boolean).join(' · ') || 'Add your bike'), h('div', { class: 'headline-l' }, v.model || 'Tap edit to add it')),
-          h('div', { class: 'stats' }, h('div', {}, h('div', { class: 'v' }, h('span', { class: 'title-l' }, v.odometer ? fmtInt(v.odometer) : '–'), h('span', { class: 'title-s l' }, 'km')), h('div', { class: 'label-m l' }, 'Odometer'))))),
-      h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Your bike'),
-      h('div', { class: 'list' },
-        listItem({ icon: 'local_gas_station', title: 'Fuel log', sub: fuel?.stats.avgKmpl ? `${fuel.stats.avgKmpl} km/l average · ₹${fmtInt(fuel.stats.totalSpent)} spent` : 'Log fill-ups to track mileage', trail: ic('chevron_right'), onclick: () => push('fuel') }),
-        listItem({ icon: 'checklist', title: 'Pre-ride checklist', sub: 'Lights, chain, tyres, documents', trail: ic('chevron_right'), onclick: () => push('setup', { step: 3, checkOnly: true }) }),
-        parked ? listItem({ icon: 'local_parking', title: 'Where you parked', sub: `Saved ${new Date(parked.at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`, trail: ic('open_in_new'), onclick: () => window.open(`https://www.openstreetmap.org/?mlat=${parked.lat}&mlon=${parked.lng}#map=18/${parked.lat}/${parked.lng}`, '_blank', 'noopener') }) : null),
-      h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Ride ready'),
-      h('div', { class: 'list' },
-        listItem({ icon: 'mic', title: 'Mic test', sub: 'Check your helmet headset', trail: ic('chevron_right'), onclick: () => push('mictest') }),
-        listItem({ icon: 'emergency', title: 'Emergency contacts', sub: ctx.contacts.length ? ctx.contacts.map((c) => c.name).join(', ') : 'Who SOS should call', trail: ic('chevron_right'), onclick: () => push('contacts') }),
-        listItem({ icon: 'settings', title: 'Settings', sub: 'Appearance, Glove Mode, directions', trail: ic('chevron_right'), onclick: () => push('settings') })),
-      h('div', { style: 'height:24px' }));
-  };
-  render();
-  api.get('/api/fuel').then(render).catch(() => {});
-  return onMany({ user: () => render(), settings: () => render() });
-});
-
 // ---------------------------------------------------------------- fuel log
-register('fuel', (el) => {
-  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back }), h('h1', { class: 'title title-l' }, 'Fuel log'));
+register('fuel', (el, params) => {
+  const vid = params.vehicleId || ctx.user?.vehicle?.id || '';
+  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back }), h('h1', { class: 'title title-l' }, params.title ? `Fuel · ${params.title}` : 'Fuel log'));
   const body = h('div', { class: 'screen-body pad' });
   const fab = h('button', { type: 'button', class: 'fab', style: 'position:absolute;right:16px;bottom:calc(16px + var(--safe-b));z-index:5', onclick: () => addSheet() }, ic('add'), 'Add fill-up');
   el.append(bar, body, fab);
@@ -88,7 +58,7 @@ register('fuel', (el) => {
           icon: e.full ? 'local_gas_station' : 'water_drop', title: `${fmtInt(e.odometer)} km`, sub: `${e.date} · ${e.litres} L · ₹${e.pricePerLitre}/L${e.full ? '' : ' · partial'}`,
           trail: h('span', { class: 'row gap8' }, e.kmpl ? h('span', { class: 'title-s', style: 'color:var(--on-surface)' }, `${e.kmpl} km/l`) : null,
             iconButton('delete', { label: `Delete fill-up at ${e.odometer} km`, small: true, onclick: async () => {
-              try { const d = await api.del(`/api/fuel/${e.id}`); draw(d); snackbar('Fill-up deleted', { action: { label: 'Undo', run: async () => { try { draw(await api.post('/api/fuel', e)); } catch (err) { snackbar(err.message); } } } }); } catch (err) { snackbar(err.message); }
+              try { const d = await api.del(`/api/fuel/${e.id}`); draw(d); snackbar('Fill-up deleted', { action: { label: 'Undo', run: async () => { try { draw(await api.post('/api/fuel', { ...e, vehicleId: vid })); } catch (err) { snackbar(err.message); } } } }); } catch (err) { snackbar(err.message); }
             } })),
         })))
         : h('div', { class: 'empty' }, ic('local_gas_station'), h('p', { class: 'body-m' }, 'Log each fill-up. Mileage appears from your second full tank.')),
@@ -106,11 +76,9 @@ register('fuel', (el) => {
       e.preventDefault();
       await withLoading(go, async () => {
         try {
-          const d = await api.post('/api/fuel', { odometer: odo.input.value, litres: litres.input.value, pricePerLitre: price.input.value, date: date.input.value, full });
+          const d = await api.post('/api/fuel', { vehicleId: vid, odometer: odo.input.value, litres: litres.input.value, pricePerLitre: price.input.value, date: date.input.value, full });
           store.set('lastPrice', price.input.value);
-          if (ctx.user?.vehicle && Number(odo.input.value) > (ctx.user.vehicle.odometer || 0)) {
-            api.patch('/api/me', { vehicle: { ...ctx.user.vehicle, odometer: odo.input.value } }).then((r) => { ctx.user = r.user; store.set('user', r.user); emit('user', r.user); }).catch(() => {});
-          }
+          if (d.user) { ctx.user = d.user; store.set('user', d.user); emit('user', d.user); } // odometer follows the fuel log
           close(); draw(d);
           snackbar(d.entries[0]?.kmpl ? `Added: ${d.entries[0].kmpl} km/l since your last full tank` : 'Fill-up added');
         } catch (err) { odo.setError(err.message); }
@@ -118,59 +86,7 @@ register('fuel', (el) => {
     } }, h('h2', { class: 'headline-s' }, 'Add fill-up'), odo, h('div', { class: 'row gap12' }, h('div', { class: 'grow' }, litres), h('div', { class: 'grow' }, price)), date,
       listItem({ title: 'Filled to full tank', sub: 'Needed to work out mileage', trail: switchEl({ checked: true, label: 'Filled to full tank', onchange: (v) => (full = v) }), cls: 'switch-row' }), go);
   });
-  api.get('/api/fuel').then(draw).catch((e) => body.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', {}, e.message))));
-});
-
-// ---------------------------------------------------------------- settings
-register('settings', (el) => {
-  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back }), h('h1', { class: 'title title-l' }, 'Settings'));
-  const body = h('div', { class: 'screen-body pad' });
-  el.append(bar, body);
-  liftOnScroll(bar, body);
-  const render = () => {
-    const u = ctx.user;
-    const name = field({ label: 'Your name', value: u.name, attrs: { maxlength: 40 } });
-    const themeSeg = segmented([{ value: 'auto', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], setting('theme', 'auto'), (v) => { setSetting('theme', v); applyTheme(); render(); }, { label: 'Theme' });
-    const light = currentLight();
-    body.replaceChildren(
-      h('div', { class: 'section-title title-s' }, 'Profile'),
-      h('form', { class: 'row gap8', onsubmit: async (e) => {
-        e.preventDefault();
-        try { ctx.user = (await api.patch('/api/me', { name: name.input.value })).user; store.set('user', ctx.user); emit('user', ctx.user); snackbar('Name saved'); } catch (err) { name.setError(err.message); }
-      } }, h('div', { class: 'grow' }, name), button('Save', { style: 'tonal', type: 'submit' })),
-      h('div', { class: 'list mt8' }, listItem({ icon: TYPES[vehicleType(u.vehicle)].icon, title: 'Your bike', sub: [u.vehicle?.make, u.vehicle?.model].filter(Boolean).join(' ') || 'Not added', trail: ic('chevron_right'), onclick: editBikeSheet })),
-
-      h('div', { class: 'section-title title-s' }, 'Appearance'),
-      themeSeg,
-      h('p', { class: 'body-s variant', style: 'padding:8px 4px 0' }, setting('theme', 'auto') === 'auto' ? `Auto follows sunrise and sunset where you are. Right now: ${light === 'day' ? 'Day' : light === 'evening' ? 'Evening' : 'Night'}.` : 'Fixed until you switch back to Auto.'),
-      h('div', { class: 'title-s', style: 'padding:20px 4px 12px' }, 'Accent colour'),
-      h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Accent colour' }, Object.entries(ACCENTS).map(([k, a]) => h('button', {
-        type: 'button', class: 'swatch', role: 'radio', 'aria-checked': String(setting('accent', 'blue') === k), 'aria-label': a.name, style: `background:${light === 'day' ? a.l[0] : a.d[0]};color:${light === 'day' ? a.l[1] : a.d[1]}`,
-        onclick: () => { setSetting('accent', k); applyTheme(); render(); },
-      }, ic('check')))),
-      h('div', { class: 'list mt16' },
-        listItem({ icon: 'back_hand', title: 'Glove Mode', sub: 'Bigger buttons and ride controls', trail: switchEl({ checked: setting('glove', false), label: 'Glove Mode', onchange: (v) => { setSetting('glove', v); applyTheme(); } }) })),
-
-      h('div', { class: 'section-title title-s' }, 'Riding'),
-      h('div', { class: 'list' },
-        listItem({ icon: 'record_voice_over', title: 'Spoken directions', sub: 'Turn-by-turn in your headset', trail: switchEl({ checked: setting('speak', true), label: 'Spoken directions', onchange: (v) => setSetting('speak', v) }) }),
-        listItem({ icon: 'share_location', title: 'Share my location', sub: 'Only with the group you ride with', trail: switchEl({ checked: setting('share', true), label: 'Share my location', onchange: (v) => setSetting('share', v) }) }),
-        listItem({ icon: 'noise_control_off', title: 'Noise cancel', sub: 'Reduce wind noise when you talk', trail: switchEl({ checked: ctx.noiseCancel, label: 'Noise cancel', onchange: (v) => { ctx.noiseCancel = v; store.set('noiseCancel', v); } }) })),
-
-      h('div', { class: 'section-title title-s' }, 'Safety and audio'),
-      h('div', { class: 'list' },
-        listItem({ icon: 'emergency', title: 'Emergency contacts', sub: ctx.contacts.length ? `${ctx.contacts.length} saved` : 'None yet', trail: ic('chevron_right'), onclick: () => push('contacts') }),
-        listItem({ icon: 'mic', title: 'Mic test', sub: 'Check your headset', trail: ic('chevron_right'), onclick: () => push('mictest') })),
-
-      h('div', { class: 'section-title title-s' }, 'About'),
-      native() ? h('div', { class: 'list', style: 'margin-bottom:12px' }, listItem({ icon: 'dns', title: 'App server', sub: (() => { try { return native().serverUrl(); } catch { return location.origin; } })(), trail: ic('chevron_right'), onclick: () => native().openServerSettings() })) : null,
-      h('p', { class: 'body-s variant', style: 'padding:0 4px' }, 'Rylaide prototype. Map data © OpenStreetMap contributors, tiles by OpenFreeMap, weather by MET Norway.'),
-      h('div', { class: 'mt16', style: 'padding-bottom:32px' }, button('Sign out of this phone', { style: 'danger-outlined', wide: true, icon: 'logout', onclick: async () => {
-        if (!(await dialog({ title: 'Sign out?', body: 'This prototype has no passwords, so you can’t sign back in to this account. You’ll start fresh.', confirm: 'Sign out', danger: true }))) return;
-        rt.close(); api.setToken(null); ['user', 'groupId'].forEach(store.del); location.reload();
-      } })));
-  };
-  render();
+  api.get(`/api/fuel?vehicle=${vid}`).then(draw).catch((e) => body.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', {}, e.message))));
 });
 
 // ---------------------------------------------------------------- emergency contacts (51)

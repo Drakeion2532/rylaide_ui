@@ -1,8 +1,8 @@
-// 38 My groups → G01 Group space (Chat · Riders · Invite)
-import { h, fmtDist, haversine, fmtTime, shareText } from '../util.js';
+// 38 My groups → G01 Group space (Chat · Rides · Members · Shared are tabs) → 39 Group info (groupinfo.js) · 16 Nearby
+import { h, fmtDist, haversine, fmtTime, fmtKm, durShort } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, on, onMany } from '../state.js';
-import { ic, button, iconButton, listItem, avatar, avatarStack, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll } from '../ui.js';
+import { ic, button, iconButton, listItem, avatar, avatarStack, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll, sectionTitle } from '../ui.js';
 import { register, push, back } from '../router.js';
 import * as engine from '../engine.js';
 
@@ -44,14 +44,16 @@ register('groups', (el) => {
     if (!ctx.groups.length) {
       body.replaceChildren(h('div', { class: 'empty' }, ic('groups'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'No groups yet'),
         h('p', { class: 'body-m' }, 'Start a group and share the code, or join one with a code from your leader.'),
-        h('div', { class: 'row gap8' }, button('Join with a code', { style: 'outlined', onclick: () => joinSheet() }), button('New group', { onclick: () => newGroupSheet() }))));
+        h('div', { class: 'row gap8' }, button('Join with a code', { style: 'outlined', onclick: () => joinSheet() }), button('New group', { onclick: () => newGroupSheet() })),
+        button('Find riders nearby', { style: 'text', icon: 'nearby', onclick: () => push('nearby') })));
       return;
     }
     body.replaceChildren(h('div', { class: 'list', style: 'margin-top:8px' }, ctx.groups.map((g) => listItem({
       title: g.name, sub: `${g.members.length} ${g.members.length === 1 ? 'rider' : 'riders'}${g.id === ctx.group?.id ? ' · Current' : ''}`,
       trail: h('span', { class: 'row gap8' }, avatarStack(g.members.map((m) => m.name), 3), ic('chevron_right')),
       onclick: () => { engine.openGroup(g); push('group', { id: g.id }); },
-    }))), h('button', { type: 'button', class: 'shortcut', onclick: () => joinSheet() }, ic('group_add'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Join with a code'), h('span', { class: 'body-s variant' }, 'Or open an invite link from your group')), ic('chevron_right')), h('div', { style: 'height:80px' }));
+    }))), h('button', { type: 'button', class: 'shortcut', onclick: () => joinSheet() }, ic('group_add'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Join with a code'), h('span', { class: 'body-s variant' }, 'Or open an invite link from your group')), ic('chevron_right')),
+      h('button', { type: 'button', class: 'shortcut', onclick: () => push('nearby') }, ic('nearby'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, 'Riders nearby'), h('span', { class: 'body-s variant' }, 'Make a group with riders right here, no code')), ic('chevron_right')), h('div', { style: 'height:80px' }));
   };
   render();
   return onMany({ groups: render, group: render });
@@ -61,11 +63,13 @@ register('group', (el, params) => {
   const g0 = ctx.groups.find((g) => g.id === params.id);
   if (!g0) { setTimeout(back, 0); return; }
   if (ctx.group?.id !== g0.id) engine.openGroup(g0);
-  let view = params.tab || 'chat';
-  const title = h('h1', { class: 'title title-l' }, g0.name);
+  let view = { invite: 'members', riders: 'members' }[params.tab] || params.tab || 'chat';
+  if (params.tab === 'invite') setTimeout(() => push('invite', { id: g0.id }), 0);
+  const title = h('button', { type: 'button', class: 'title title-l group-title', 'aria-label': 'Group info', onclick: () => push('groupinfo', { id: g0.id }) }, g0.name);
   const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back }), title,
-    iconButton('person_add', { label: 'Invite riders', onclick: () => { seg.set('invite'); show('invite'); } }));
-  const seg = segmented([{ value: 'chat', label: 'Chat' }, { value: 'riders', label: 'Riders' }, { value: 'invite', label: 'Invite' }], view, (v) => show(v), { label: 'Group sections' });
+    iconButton('person_add', { label: 'Invite riders', onclick: () => push('invite', { id: g0.id }) }),
+    iconButton('info', { label: 'Group info', onclick: () => push('groupinfo', { id: g0.id }) }));
+  const seg = segmented([{ value: 'chat', label: 'Chat' }, { value: 'rides', label: 'Rides' }, { value: 'members', label: 'Members' }, { value: 'shared', label: 'Shared' }], view, (v) => show(v), { label: 'Group sections' });
   const content = h('div', { class: 'screen-body' });
   const foot = h('div');
   el.append(bar, h('div', { style: 'padding:0 16px 8px' }, seg), content, foot);
@@ -96,63 +100,107 @@ register('group', (el, params) => {
     requestAnimationFrame(() => (content.scrollTop = content.scrollHeight));
   };
 
-  // ---- riders
+  // ---- members (live status; full list and leader tools in 41 Members)
   const renderRiders = () => {
     const g = ctx.group;
+    if (!g) return;
     content.replaceChildren(h('div', { style: 'padding:8px 16px 24px' },
+      g.live ? h('button', { type: 'button', class: 'banner ok', style: 'margin:0 0 12px;width:100%;border:0;text-align:left', onclick: () => push('setup', g.live.lat != null ? { mode: 'group', quickDest: { name: g.live.destination, lat: g.live.lat, lng: g.live.lng } } : { mode: 'group' }) },
+        ic('two_wheeler'), h('span', { class: 'main' }, h('span', { class: 'title-s' }, `${g.live.byName} is riding${g.live.destination ? ` to ${g.live.destination}` : ''}`), h('span', { class: 'body-m' }, 'Tap to join this ride'))) : null,
       h('div', { class: 'list' }, [...g.members].sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name)).map((m) => {
         const me = m.id === ctx.user.id;
         const loc = ctx.locs.get(m.id);
         let sub = me ? 'You' : m.online ? 'Online' : 'Offline';
         if (!me && loc && ctx.pos) sub += ` · ${fmtDist(haversine([ctx.pos.lat, ctx.pos.lng], [loc.lat, loc.lng]))} away`;
+        if (g.live?.riders.includes(m.id)) sub += ' · riding';
         if (ctx.sos.has(m.id)) sub = 'SOS active';
         return listItem({
-          lead: avatar(m.name, { status: ctx.sos.has(m.id) ? 'off' : ctx.speaking === m.id ? 'speaking' : (m.online || me) ? 'connected' : 'off' }),
+          lead: avatar(m.name, { status: ctx.sos.has(m.id) ? 'off' : ctx.speaking === m.id ? 'speaking' : (m.online || me) ? 'connected' : 'off', color: m.color }),
           title: `${m.name}${m.id === g.ownerId ? ' · Leader' : ''}`, sub,
           trail: loc && !me ? button('Find', { style: 'text', onclick: () => push('ridemap', { focus: loc }) }) : null,
           cls: ctx.sos.has(m.id) ? 'alert' : '',
         });
       })),
-      h('div', { class: 'mt24' }, button('Leave group', { style: 'danger-outlined', wide: true, icon: 'logout', onclick: async () => {
-        if (!(await dialog({ title: `Leave ${g.name}?`, body: `You can rejoin any time with code ${g.code}.`, confirm: 'Leave', danger: true }))) return;
-        try { await engine.leaveGroup(g); snackbar(`You left ${g.name}`); back(); } catch (e) { snackbar(e.message); }
-      } }))));
+      h('div', { class: 'row gap8 mt16' }, button('Invite', { style: 'tonal', icon: 'person_add', onclick: () => push('invite', { id: g.id }) }), button('Group info', { style: 'text', icon: 'info', onclick: () => push('groupinfo', { id: g.id }) }))));
   };
 
-  // ---- invite
-  const renderInvite = () => {
-    const g = ctx.group;
-    const url = `${location.origin}/?join=${g.code}`;
-    const qr = h('img', { class: 'qr-box', alt: `QR code to join ${g.name}` });
-    fetch(`/api/groups/${g.id}/qr.svg`, { headers: { authorization: `Bearer ${api.token}` } }).then((r) => (r.ok ? r.blob() : null)).then((b) => { if (b) qr.src = URL.createObjectURL(b); }).catch(() => {});
-    const share = async () => {
-      const text = `Ride with me on Rylaide. Join “${g.name}” with code ${g.code}`;
-      if ((await shareText({ title: 'Join my ride', text, url })) === 'copied') snackbar('Invite link copied');
-    };
-    content.replaceChildren(h('div', { class: 'stack gap16', style: 'align-items:center;text-align:center;padding:16px 16px 32px' },
-      qr,
-      h('div', {}, h('div', { class: 'label-l variant' }, 'Group code'), h('button', { type: 'button', class: 'code-big', style: 'border:0;background:none;color:inherit', 'aria-label': `Copy code ${g.code.split('').join(' ')}`, onclick: async () => { try { await navigator.clipboard.writeText(g.code); snackbar('Code copied'); } catch { /* ignore */ } } }, g.code)),
-      h('p', { class: 'body-m variant' }, 'Riders scan the QR code, open the link, or type the code in Groups → Join.'),
-      button('Share invite', { size: 'large', icon: 'share', onclick: share, wide: true }),
-      g.plan ? h('div', { class: 'card pad', style: 'width:100%;text-align:left' }, h('div', { class: 'label-m variant' }, 'Ride plan'), h('div', { class: 'title-m' }, g.plan.destination),
-        h('div', { class: 'body-s variant' }, [g.plan.meetAt && `Meet at ${g.plan.meetAt}`, `set by ${g.plan.setBy}`].filter(Boolean).join(' · ')),
-        h('div', { class: 'mt8' }, button('Ride there', { style: 'tonal', icon: 'navigation', onclick: () => push('setup', { quickDest: { name: g.plan.destination, lat: g.plan.lat, lng: g.plan.lng } }) }))) : null));
+  // ---- rides (rides recorded with this group)
+  const renderRides = async () => {
+    content.replaceChildren(h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
+    try {
+      const { rides } = await api.get(`/api/groups/${params.id}/rides`);
+      if (view !== 'rides') return;
+      content.replaceChildren(h('div', { style: 'padding:8px 16px 24px' }, rides.length
+        ? h('div', { class: 'list' }, rides.map((r) => listItem({
+          icon: 'route', title: r.destination || r.name, sub: `${r.mine ? 'You' : r.riderName} · ${fmtKm(r.distance)} km · ${durShort(r.duration)}`,
+          trail: h('span', { class: 'row gap8' }, new Date(r.startedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }), ic('chevron_right')),
+          onclick: () => push('summary', r.mine ? { id: r.id } : { ride: { ...r, id: null, points: [] } }),
+        })))
+        : h('div', { class: 'empty' }, ic('route'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'No group rides yet'), h('p', { class: 'body-m' }, 'Rides you take as a group ride show here for everyone.'), button('Start a group ride', { onclick: () => push('setup', { mode: 'group' }) }))));
+    } catch (e) { content.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', { class: 'body-m' }, e.message))); }
   };
+
+  // ---- shared places
+  const KIND = { meet: ['Meet point', 'flag'], fuel: ['Fuel', 'local_gas_station'], food: ['Food', 'restaurant'], view: ['Viewpoint', 'landscape'], stay: ['Stay', 'hotel'], repair: ['Repair', 'build'], other: ['Place', 'place'] };
+  const renderShared = async () => {
+    content.replaceChildren(h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
+    try {
+      const { shared } = await api.get(`/api/groups/${params.id}/shared`);
+      if (view !== 'shared') return;
+      const lead = ctx.group?.ownerId === ctx.user.id;
+      content.replaceChildren(h('div', { style: 'padding:8px 16px 24px' },
+        button('Share a place', { icon: 'add_location_alt', wide: true, onclick: () => shareSheet() }),
+        shared.length ? [sectionTitle('Saved by the group', `${shared.length}`), h('div', { class: 'list' }, shared.map((p) => listItem({
+          icon: KIND[p.kind]?.[1] || 'place', title: p.name,
+          sub: [KIND[p.kind]?.[0], p.note, `${p.by === ctx.user.id ? 'you' : p.byName}`, ctx.pos ? fmtDist(haversine([ctx.pos.lat, ctx.pos.lng], [p.lat, p.lng])).replace('now', 'here') : null].filter(Boolean).join(' · '),
+          trail: h('span', { class: 'row gap8' },
+            iconButton('navigation', { label: `Ride to ${p.name}`, small: true, onclick: () => push('setup', { mode: 'group', quickDest: { name: p.name, lat: p.lat, lng: p.lng } }) }),
+            p.by === ctx.user.id || lead ? iconButton('delete', { label: `Remove ${p.name}`, small: true, onclick: async () => {
+              try { await api.del(`/api/groups/${params.id}/shared/${p.id}`); renderShared(); } catch (e) { snackbar(e.message); }
+            } }) : null),
+        })))] : h('div', { class: 'empty', style: 'padding-top:24px' }, ic('add_location_alt'), h('p', { class: 'body-m' }, 'Share meet points, fuel stops, dhabas and viewpoints so the whole group can ride there.'))));
+    } catch (e) { content.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', { class: 'body-m' }, e.message))); }
+  };
+  const shareSheet = (pre = {}) => sheet((close) => {
+    let kind = pre.kind || 'meet';
+    const place = pre.place || null;
+    const name = field({ label: 'Name', value: pre.name || (place ? engine.short(place.name) : ''), attrs: { maxlength: 80, name: 'name' }, onSurface: true });
+    const note = field({ label: 'Note', value: pre.note || '', attrs: { maxlength: 200, name: 'note' }, onSurface: true, support: 'Optional, like “parking behind the pump”' });
+    const where = h('div', { class: 'body-m variant' }, place ? engine.short(place.name) : ctx.pos ? 'Where you are now' : 'Waiting for your location…');
+    const chips = h('div', { class: 'row gap8', style: 'flex-wrap:wrap' });
+    const drawChips = () => chips.replaceChildren(...Object.entries(KIND).map(([k, [l, icn]]) => h('button', { type: 'button', class: `chip${kind === k ? ' on' : ''}`, 'aria-pressed': String(kind === k), onclick: () => { kind = k; drawChips(); } }, ic(icn, { size: 18 }), l)));
+    drawChips();
+    const pick = button(place ? 'Change' : 'Pick on the map', { style: 'text', icon: 'pin_drop', onclick: () => {
+      const keep = { kind, name: name.input.value, note: note.input.value };
+      close();
+      push('pin', { title: 'Share a place', start: place, onPick: (p) => setTimeout(() => shareSheet({ ...keep, place: p, name: keep.name || engine.short(p.name) }), 350) });
+    } });
+    const go = button('Share with the group', { size: 'large', wide: true, type: 'submit' });
+    return h('form', { class: 'stack gap16', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const p = place || (ctx.pos ? { lat: ctx.pos.lat, lng: ctx.pos.lng } : null);
+      if (!p) return name.setError('Waiting for your location. Or pick a place on the map.');
+      await withLoading(go, async () => {
+        try { await api.post(`/api/groups/${params.id}/shared`, { name: name.input.value, note: note.input.value, kind, lat: p.lat, lng: p.lng }); close(); snackbar('Shared with the group'); if (view === 'shared') renderShared(); } catch (err) { name.setError(err.message); }
+      });
+    } }, h('h2', { class: 'headline-s' }, 'Share a place'), chips, name, note, h('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, h('div', { class: 'row gap8' }, ic(place ? 'location_on' : 'my_location', { size: 18 }), where), pick), go);
+  });
 
   const show = (v) => {
     view = v;
     ctx.chatOpen = v === 'chat';
     if (v === 'chat') { ctx.unread = 0; content.replaceChildren(chatList, typing); foot.replaceChildren(composer); renderChat(); }
-    else { foot.replaceChildren(); v === 'riders' ? renderRiders() : renderInvite(); }
+    else { foot.replaceChildren(); ({ members: renderRiders, rides: renderRides, shared: renderShared })[v](); }
   };
   show(view);
   const offs = onMany({
     chat: (m) => { if (view === 'chat') { chatList.querySelector('.empty')?.remove(); if (!chatList.querySelector(`[data-id="${m.id}"]`)) chatList.append(bubble(m)); content.scrollTop = content.scrollHeight; } },
     messages: () => view === 'chat' && renderChat(),
     typing: (m) => { typing.textContent = `${m.name} is typing…`; clearTimeout(typing.t); typing.t = setTimeout(() => (typing.textContent = ''), 3000); },
-    group: (g) => { if (!g || g.id !== params.id) return; title.textContent = g.name; if (view === 'riders') renderRiders(); },
-    loc: () => view === 'riders' && renderRiders(),
-    speaking: () => view === 'riders' && renderRiders(),
+    group: (g) => { if (!g || g.id !== params.id) return; title.textContent = g.name; if (view === 'members') renderRiders(); },
+    loc: () => view === 'members' && renderRiders(),
+    speaking: () => view === 'members' && renderRiders(),
+    'group-data': (d) => d.groupId === params.id && d.kind === 'shared' && view === 'shared' && renderShared(),
   });
   return () => { ctx.chatOpen = false; offs(); };
 });

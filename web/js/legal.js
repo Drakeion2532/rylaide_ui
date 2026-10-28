@@ -1,5 +1,7 @@
 // 04b Before you start · 56 Terms of use · 57 Privacy. Plain-language prototype text: have it reviewed before a public launch.
-export const SUPPORT_EMAIL = 'Relaide.com@gmail.com';
+// Support email comes from the server (SUPPORT_EMAIL setting). Empty until the Rylaide address is ready;
+// meanwhile problem reports go to Rylaide's server from Settings → Customer care.
+export const supportEmail = () => window.__rylaideConfig?.supportEmail || '';
 
 export const TERMS_SUMMARY = [
   ['two_wheeler', 'Ride first, phone second', 'Set up before you ride. While moving, use only the big ride controls, or let your pillion handle the phone.'],
@@ -15,7 +17,7 @@ export const TERMS = [
   ['SOS and crash detection', 'SOS and crash detection depend on your phone, its sensors, battery and internet connection. They may not work every time and are not an emergency service. Call 112 when you need help.'],
   ['Groups and chat', 'Be respectful. Don’t share anything illegal, hateful or private about other people. Group leaders can remove members. We may remove content or accounts that break these rules.'],
   ['Your account', 'There is no password: your phone holds your sign-in, and your account code lets you sign in on another phone. Keep the code private, like a password.'],
-  ['Costs and refunds', 'Rylaide is free during this prototype. Shared expenses in groups are a record between riders; Rylaide doesn’t move money. For anything about payments or refunds, email ' + SUPPORT_EMAIL + '.'],
+  ['Costs and refunds', 'Rylaide is free during this prototype. Shared expenses in groups are a record between riders; Rylaide doesn’t move money. For anything about payments or refunds, contact us from Settings → Customer care.'],
   ['Changes', 'We’ll tell you in the app before these terms change in a way that matters. Using Rylaide after that means you accept the new terms.'],
 ];
 
@@ -25,5 +27,5 @@ export const PRIVACY = [
   ['Voice', 'Push-to-talk clips go to your group as they’re spoken and are not stored on our server. Only a “voice message” line is kept in chat.'],
   ['Who we share with', 'Map and weather services receive the places you search and route to, without your name. We don’t sell data or use advertising.'],
   ['Keeping and deleting', 'Data stays until you delete it. Settings → Account → Delete account removes your rides, vehicles, logs and contacts and takes you out of your groups.'],
-  ['Contact', 'Questions or requests: ' + SUPPORT_EMAIL + '.'],
+  ['Contact', 'Questions or requests: Settings → Customer care in the app.'],
 ];

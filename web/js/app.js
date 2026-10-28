@@ -121,6 +121,7 @@ async function boot() {
   if (qs.get('group')) store.set('pendingGroup', qs.get('group'));
   if (join || location.search) history.replaceState(null, '', '/');
 
+  fetch('/api/config').then((r) => r.json()).then((c) => (window.__rylaideConfig = c)).catch(() => {});
   let signedIn = false;
   if (api.token) {
     try { ctx.user = (await api.get('/api/me')).user; store.set('user', ctx.user); signedIn = true; } catch (e) { if (e.status === 0 && ctx.user) signedIn = true; }

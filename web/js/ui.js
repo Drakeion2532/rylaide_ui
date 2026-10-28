@@ -235,3 +235,38 @@ export const sectionTitle = (text, trail) => h('div', { class: 'section-label ti
 
 /** Money in rupees, Indian grouping. */
 export const rupees = (n) => `₹${(Math.round(n * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+/**
+ * Voice guidance button on the map (Figma: like Google Maps). Tap opens three choices:
+ * Sound on (directions + alerts) · Alerts only · Muted. getMode/setMode come from the engine.
+ */
+export const VOICE_MODES = [
+  { value: 'on', icon: 'volume_up', label: 'Sound on', sub: 'Directions and alerts' },
+  { value: 'alerts', icon: 'notification_important', label: 'Alerts only', sub: 'Safety alerts, no directions' },
+  { value: 'off', icon: 'volume_off', label: 'Muted', sub: 'No voice' },
+];
+export function voiceGuideButton({ getMode, setMode }) {
+  const wrap = h('div', { class: 'vg' });
+  const icon = () => VOICE_MODES.find((m) => m.value === getMode())?.icon || 'volume_up';
+  const btn = h('button', { type: 'button', class: 'icon-btn surface vg-btn', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'data-voice-guide': getMode() }, ic(icon()));
+  const label = () => `Voice guidance: ${VOICE_MODES.find((m) => m.value === getMode())?.label}`;
+  btn.setAttribute('aria-label', label());
+  let menu = null, t = null;
+  const close = () => { menu?.remove(); menu = null; btn.setAttribute('aria-expanded', 'false'); clearTimeout(t); document.removeEventListener('pointerdown', outside, true); };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  const refresh = () => { btn.replaceChildren(ic(icon())); btn.dataset.voiceGuide = getMode(); btn.setAttribute('aria-label', label()); };
+  btn.onclick = () => {
+    if (menu) return close();
+    menu = h('div', { class: 'vg-menu', role: 'menu' }, VOICE_MODES.map((m) => h('button', {
+      type: 'button', role: 'menuitemradio', 'aria-checked': String(getMode() === m.value), class: `vg-opt${getMode() === m.value ? ' on' : ''}`, 'data-mode': m.value,
+      onclick: () => { setMode(m.value); refresh(); close(); snackbar(m.value === 'off' ? 'Voice guidance muted' : m.value === 'alerts' ? 'Alerts only: no turn-by-turn voice' : 'Voice guidance on', { ms: 2500 }); },
+    }, ic(m.icon), h('span', { class: 'main' }, h('span', { class: 'label-l' }, m.label), h('span', { class: 'body-s variant' }, m.sub)))));
+    wrap.append(menu);
+    btn.setAttribute('aria-expanded', 'true');
+    t = setTimeout(close, 6000);
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+  };
+  wrap.append(btn);
+  wrap.refresh = refresh;
+  return wrap;
+}

@@ -296,7 +296,7 @@ test('realtime: rate limit protects the server', async () => {
   const w = socket(a.token); await w.opened;
   w.json({ t: 'sub', groupId: g.id });
   await w.next((m) => m.t === 'snapshot');
-  for (let i = 0; i < 60; i++) w.json({ t: 'ping', ts: i });
+  for (let i = 0; i < 120; i++) w.json({ t: 'ping', ts: i });
   assert.match((await w.next((m) => m.t === 'error')).error, /Slow down/);
   w.close();
 });

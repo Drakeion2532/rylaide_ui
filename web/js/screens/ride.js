@@ -1,7 +1,7 @@
 // 25r Ride hub (Map · Speed · Group) · 25u with pillion (Map · Speed · Pillion) · 25 Full-screen map · 30 SOS countdown
 import { h, fmtDist, fmtKm, fmtEta, haversine, store, vibrate } from '../util.js';
 import { ctx, onMany } from '../state.js';
-import { ic, button, iconButton, avatar, connectionStatus, segmented, rideControl, switchEl, ring, dialog, snackbar, sheet, listItem } from '../ui.js';
+import { ic, button, iconButton, avatar, connectionStatus, segmented, rideControl, switchEl, ring, dialog, snackbar, sheet, listItem, voiceGuideButton, VOICE_MODES } from '../ui.js';
 import { register, push, back, tab, current } from '../router.js';
 import { RideMap } from '../map.js';
 import * as engine from '../engine.js';
@@ -89,6 +89,29 @@ function connChip() {
   return connectionStatus(state === 'internet' ? 'internet' : state, true);
 }
 
+/** 25q: log a fuel stop mid-ride. */
+function refillSheet() {
+  sheet((close) => {
+    const litres = h('input', { type: 'number', inputmode: 'decimal', min: 0.1, step: '0.01', placeholder: ' ', name: 'litres' });
+    const price = h('input', { type: 'number', inputmode: 'decimal', min: 0, step: '0.01', placeholder: ' ', name: 'price', value: store.get('lastPrice', '') });
+    let full = true;
+    const err = h('p', { class: 'body-s', style: 'color:var(--error);margin:0' });
+    const go = button('Save refill', { size: 'large', wide: true, type: 'submit' });
+    return h('form', { class: 'stack gap16', onsubmit: async (e) => {
+      e.preventDefault();
+      go.disabled = true;
+      try {
+        await engine.logRefill({ litres: litres.value, pricePerLitre: price.value, full });
+        store.set('lastPrice', price.value);
+        close(); snackbar(`Refill saved to ${ctx.user?.vehicle?.model || 'your bike'}’s fuel log`);
+      } catch (x) { err.textContent = x.message; go.disabled = false; }
+    } }, h('h2', { class: 'headline-s' }, 'Log a refill'),
+      h('div', { class: 'row gap12' }, h('label', { class: 'field on-surface grow' }, litres, h('label', {}, 'Litres')), h('label', { class: 'field on-surface grow' }, price, h('label', {}, 'Price per litre (₹)'))),
+      listItem({ title: 'Filled to full tank', sub: 'Needed to work out mileage', trail: switchEl({ checked: true, label: 'Filled to full tank', onchange: (v) => (full = v) }), cls: 'switch-row' }),
+      err, go);
+  });
+}
+
 async function confirmEnd() {
   if (!(await dialog({ title: 'End this ride?', body: 'Your route, time and speed are saved to History.', confirm: 'End ride' }))) return;
   const r = await engine.endRide();
@@ -96,27 +119,65 @@ async function confirmEnd() {
   if (r) push('summary', { ride: r, justEnded: true }, { replace: true });
 }
 
+/** Speedometer (Figma: 29 gauge) with distance / average / top tiles. */
+function speedGauge() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 300 300');
+  const add = (tag, a) => { const e = document.createElementNS(NS, tag); Object.entries(a).forEach(([k, v]) => e.setAttribute(k, v)); svg.append(e); return e; };
+  // 270° arc, 0–160 km/h
+  const R = 130, C = 150, A0 = 135, SPAN = 270;
+  const pt = (deg, r = R) => [C + r * Math.cos((deg * Math.PI) / 180), C + r * Math.sin((deg * Math.PI) / 180)];
+  const arc = (a, b) => { const [x0, y0] = pt(a), [x1, y1] = pt(b); return `M ${x0} ${y0} A ${R} ${R} 0 ${b - a > 180 ? 1 : 0} 1 ${x1} ${y1}`; };
+  add('path', { d: arc(A0, A0 + SPAN), class: 'arc-track', fill: 'none', 'stroke-width': 14, 'stroke-linecap': 'round' });
+  const val = add('path', { d: arc(A0, A0 + SPAN), class: 'arc', fill: 'none', 'stroke-width': 14, 'stroke-linecap': 'round', pathLength: 100, 'stroke-dasharray': 100, 'stroke-dashoffset': 100 });
+  for (let k = 0; k <= 16; k++) {
+    const deg = A0 + (SPAN * k) / 16, major = k % 4 === 0;
+    const [x0, y0] = pt(deg, R - 22), [x1, y1] = pt(deg, R - (major ? 34 : 28));
+    add('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: 'tick', 'stroke-width': major ? 2.5 : 1.5, 'stroke-linecap': 'round' });
+    if (major) { const [tx, ty] = pt(deg, R - 50); add('text', { x: tx, y: ty + 4, 'text-anchor': 'middle', class: 'tick-l' }).textContent = String(k * 10); }
+  }
+  const num = h('span', { class: 'ride-speed tabular' }, '0');
+  const gauge = h('div', { class: 'gauge' }, svg, h('div', { class: 'readout' }, num, h('span', { class: 'title-m variant' }, 'km/h')));
+  gauge.set = (v) => { num.textContent = String(v); val.setAttribute('stroke-dashoffset', 100 - Math.min(100, (v / 160) * 100)); val.style.opacity = v > 0 ? 1 : 0; gauge.classList.toggle('over', v > 80); };
+  const stats = h('div', { class: 'speed-stats' });
+  gauge.stats = () => {
+    const r = ctx.ride, el2 = (Date.now() - r.startedAt) / 1000;
+    stats.replaceChildren(
+      h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, fmtKm(r.dist)), h('span', { class: 'u' }, 'km')), h('span', { class: 'l' }, 'Distance')),
+      h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round(el2 > 0 ? (r.dist / el2) * 3.6 : 0))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Average')),
+      h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round(r.maxSpeed * 3.6))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Top')));
+  };
+  gauge.statsEl = stats;
+  return gauge;
+}
+
 // ---------------------------------------------------------------- ride hub
 register('ride', (el) => {
   if (!ctx.ride) { setTimeout(() => tab('home'), 0); return; }
-  const third = ctx.ride.pillion && ctx.ride.solo ? 'pillion' : 'group';
+  // 25r group (Map · Speed · Group) · 25t solo (Map · Speed) · 25u pillion (Map · Speed · Pillion) · 25q quick (Map · Speed)
+  const third = ctx.ride.quick ? null : ctx.ride.pillion && ctx.ride.solo ? 'pillion' : ctx.ride.solo ? null : 'group';
   let view = store.get('hubView', 'map');
-  if (view === 'group' || view === 'pillion') view = third;
+  if (view === 'group' || view === 'pillion') view = third || 'map';
   let map = null;
   const timer = h('span', { class: 'title-l tabular' });
   const chips = h('div', { class: 'hub-chips' });
-  const nc = () => h('button', { type: 'button', class: `status compact ${ctx.noiseCancel ? 'accent' : 'neutral'}`, style: 'border:0', 'aria-pressed': String(ctx.noiseCancel), onclick: () => { ctx.noiseCancel = !ctx.noiseCancel; store.set('noiseCancel', ctx.noiseCancel); renderChips(); snackbar(`Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`); } }, ic('noise_control_off'), `Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`);
-  const renderChips = () => chips.replaceChildren(connChip(), nc(), ctx.gps === 'denied' ? h('span', { class: 'status compact warn' }, ic('location_off'), 'Location off') : ctx.gps === 'weak' ? h('span', { class: 'status compact warn' }, ic('gps_not_fixed'), 'Weak GPS') : null);
+  const nc = () => h('button', { type: 'button', class: `status compact ${ctx.noiseCancel ? 'accent' : 'neutral'}`, style: 'border:0', 'aria-pressed': String(ctx.noiseCancel), onclick: () => { ctx.noiseCancel = !ctx.noiseCancel; store.set('noiseCancel', ctx.noiseCancel); engine.ptt.chain.setNoiseCancel(ctx.noiseCancel); renderChips(); snackbar(`Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`); } }, ic('noise_control_off'), `Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`);
+  const renderChips = () => chips.replaceChildren(connChip(), nc(), refillBtn(), ctx.gps === 'denied' ? h('span', { class: 'status compact warn' }, ic('location_off'), 'Location off') : ctx.gps === 'weak' ? h('span', { class: 'status compact warn' }, ic('gps_not_fixed'), 'Weak GPS') : null);
   const more = iconButton('more_vert', { label: 'Ride options', onclick: () => sheet((close) => h('div', { class: 'list' },
-    listItem({ icon: 'record_voice_over', title: 'Spoken directions', trail: switchEl({ checked: store.get('speak', true), label: 'Spoken directions', onchange: (v) => store.set('speak', v) }) }),
-    listItem({ icon: 'campaign', title: 'Voice chat', sub: 'Hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); render(); } }) }),
+    h('div', { style: 'padding:4px 0 12px' }, h('div', { class: 'title-s', style: 'padding:0 4px 8px' }, 'Voice guidance'),
+      segmented(VOICE_MODES.map((m) => ({ value: m.value, label: m.label })), engine.voiceGuide(), (v) => engine.setVoiceGuide(v), { label: 'Voice guidance' })),
+    listItem({ icon: 'campaign', title: 'Voice chat', sub: 'Hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); render(); } }) }),
     listItem({ icon: 'forum', title: 'Group chat', onclick: () => { close(); if (ctx.group) push('group', { id: ctx.group.id }); } }),
+    listItem({ icon: 'local_gas_station', title: 'Log a refill', sub: 'Goes into this bike’s fuel log', onclick: () => { close(); refillSheet(); } }),
     listItem({ icon: 'stop_circle', title: 'End ride', onclick: () => { close(); confirmEnd(); } }))) });
   const end = button('End ride', { style: 'danger-outlined', icon: 'stop_circle', onclick: confirmEnd });
-  const seg = segmented([{ value: 'map', label: 'Map' }, { value: 'speed', label: 'Speed' }, third === 'pillion' ? { value: 'pillion', label: 'Pillion' } : { value: 'group', label: 'Group' }], view, (v) => { view = v; store.set('hubView', v); render(); }, { label: 'Ride view' });
+  const refillBtn = () => h('button', { type: 'button', class: 'status compact neutral', style: 'border:0', 'data-refill': '', onclick: refillSheet }, ic('local_gas_station'), ctx.ride?.refills?.length ? `Refills ${ctx.ride.refills.length}` : 'Log refill');
+  const seg = segmented([{ value: 'map', label: 'Map' }, { value: 'speed', label: 'Speed' }, third === 'pillion' ? { value: 'pillion', label: 'Pillion' } : third === 'group' ? { value: 'group', label: 'Group' } : null].filter(Boolean), view, (v) => { view = v; store.set('hubView', v); render(); }, { label: 'Ride view' });
   const content = h('div', { class: 'hub-content' });
   const bannerHost = h('div', { 'data-banner-host': '', style: 'padding:0 16px' });
-  let controls = rideControls({ onRiders: () => { seg.set(third); view = third; render(); } });
+  const onRiders = () => { if (third === 'group') { seg.set(third); view = third; render(); } else push('ridegroup'); };
+  let controls = rideControls({ onRiders });
   el.append(
     h('div', { class: 'hub-top' },
       iconButton('keyboard_arrow_down', { label: 'Minimise ride', style: 'tonal', onclick: () => tab('home') }),
@@ -137,12 +198,15 @@ register('ride', (el) => {
     const mapEl = h('div', { class: 'map' });
     maneuverSlot = h('div');
     speedBubble = h('div', { class: 'speed-bubble', 'aria-label': 'Speed' }, h('b', { class: 'tabular' }, '0'), h('span', { class: 'body-s' }, 'km/h'));
-    const card = h('div', { class: 'map-card' }, mapEl, maneuverSlot, speedBubble,
+    const vg = voiceGuideButton({ getMode: engine.voiceGuide, setMode: engine.setVoiceGuide });
+    vg.classList.add('vg-on-card');
+    const card = h('div', { class: 'map-card' }, mapEl, maneuverSlot, speedBubble, vg,
       h('button', { type: 'button', class: 'btn fs-btn', onclick: () => push('ridemap') }, ic('open_in_full'), 'Full screen'));
     strip = h('div', { class: 'trip-strip' });
     content.replaceChildren(card, strip);
     map = new RideMap(mapEl, { zoom: 16, onFollowChange: () => {} });
-    map.init().then(() => map.resize());
+    const m = map;
+    m.init().then(() => m.resize()); // map may already be replaced if the rider switched views
     if (ctx.ride.route) { map.setRoutes([ctx.ride.route], 0, { fit: false, labels: false }); map.setDestination(ctx.ride.dest.lng, ctx.ride.dest.lat); }
     map.setTrack(ctx.ride.points);
     if (ctx.pos) map.setMe(ctx.pos);
@@ -162,35 +226,10 @@ register('ride', (el) => {
   };
 
   const speedView = () => {
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 300 300');
-    const add = (tag, a) => { const e = document.createElementNS(NS, tag); Object.entries(a).forEach(([k, v]) => e.setAttribute(k, v)); svg.append(e); return e; };
-    // 270° arc, 0–160 km/h
-    const R = 130, C = 150, A0 = 135, SPAN = 270;
-    const pt = (deg, r = R) => [C + r * Math.cos((deg * Math.PI) / 180), C + r * Math.sin((deg * Math.PI) / 180)];
-    const arc = (a, b) => { const [x0, y0] = pt(a), [x1, y1] = pt(b); return `M ${x0} ${y0} A ${R} ${R} 0 ${b - a > 180 ? 1 : 0} 1 ${x1} ${y1}`; };
-    add('path', { d: arc(A0, A0 + SPAN), class: 'arc-track', fill: 'none', 'stroke-width': 14, 'stroke-linecap': 'round' });
-    const val = add('path', { d: arc(A0, A0 + SPAN), class: 'arc', fill: 'none', 'stroke-width': 14, 'stroke-linecap': 'round', pathLength: 100, 'stroke-dasharray': 100, 'stroke-dashoffset': 100 });
-    for (let k = 0; k <= 16; k++) {
-      const deg = A0 + (SPAN * k) / 16, major = k % 4 === 0;
-      const [x0, y0] = pt(deg, R - 22), [x1, y1] = pt(deg, R - (major ? 34 : 28));
-      add('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: 'tick', 'stroke-width': major ? 2.5 : 1.5, 'stroke-linecap': 'round' });
-      if (major) { const [tx, ty] = pt(deg, R - 50); add('text', { x: tx, y: ty + 4, 'text-anchor': 'middle', class: 'tick-l' }).textContent = String(k * 10); }
-    }
-    const num = h('span', { class: 'ride-speed tabular' }, '0');
-    gauge = h('div', { class: 'gauge' }, svg, h('div', { class: 'readout' }, num, h('span', { class: 'title-m variant' }, 'km/h')));
-    gauge.set = (v) => { num.textContent = String(v); val.setAttribute('stroke-dashoffset', 100 - Math.min(100, (v / 160) * 100)); val.style.opacity = v > 0 ? 1 : 0; gauge.classList.toggle('over', v > 80); };
-    const stats = h('div', { class: 'speed-stats' });
-    gauge.stats = () => {
-      const r = ctx.ride, el2 = (Date.now() - r.startedAt) / 1000;
-      stats.replaceChildren(
-        h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, fmtKm(r.dist)), h('span', { class: 'u' }, 'km')), h('span', { class: 'l' }, 'Distance')),
-        h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round(el2 > 0 ? (r.dist / el2) * 3.6 : 0))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Average')),
-        h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round(r.maxSpeed * 3.6))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Top')));
-    };
+    gauge = speedGauge();
     const ns = engine.navState();
-    content.replaceChildren(h('div', { class: 'speed-view' }, ns ? maneuverCard(ns) : null, gauge, h('span', { class: 'tag' }, 'Over 80 km/h turns amber'), stats));
+    content.replaceChildren(h('div', { class: 'speed-view' }, ns ? maneuverCard(ns) : null, gauge,
+      h('div', { class: 'row gap8' }, h('span', { class: 'tag' }, 'Over 80 km/h turns amber'), h('button', { type: 'button', class: 'btn tonal', style: 'height:32px', onclick: () => push('ridegauge') }, ic('open_in_full', { size: 18 }), 'Full screen')), gauge.statsEl));
     gauge.set(speedKmh()); gauge.stats();
   };
 
@@ -216,10 +255,10 @@ register('ride', (el) => {
     };
     content.replaceChildren(h('div', { class: 'screen-body', style: 'margin:0 -16px;padding:0 16px' },
       h('div', { class: 'row', style: 'justify-content:space-between;padding:4px 0 12px' }, h('span', { class: 'title-s variant' }, 'In this ride'),
-        h('button', { type: 'button', class: 'btn tonal', style: 'height:40px', onclick: () => push('ridemap') }, ic('open_in_full', { size: 18 }), 'Full screen')),
+        h('button', { type: 'button', class: 'btn tonal', style: 'height:40px', onclick: () => push('ridegroup') }, ic('open_in_full', { size: 18 }), 'Full screen')),
       h('div', { class: 'list' }, riders.map(row)),
       h('div', { class: 'row gap8 body-s variant', style: 'padding:16px 4px' }, ic('two_wheeler', { size: 16 }), `${g.name} · ${riders.length} ${riders.length === 1 ? 'rider' : 'riders'}`),
-      h('div', { class: 'list' }, listItem({ icon: 'campaign', title: 'Voice chat', sub: ctx.voiceOn ? 'On · your group can hear you' : 'Off · you won’t hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); render(); } }) }))));
+      h('div', { class: 'list' }, listItem({ icon: 'campaign', title: 'Voice chat', sub: ctx.voiceOn ? 'On · your group can hear you' : 'Off · you won’t hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); render(); } }) }))));
   };
 
   // 25u Pillion: who's on the back, break reminders, comfort
@@ -249,7 +288,7 @@ register('ride', (el) => {
   const render = () => {
     map?.destroy(); map = null; strip = null; gauge = null;
     controls.cleanup?.();
-    const fresh = rideControls({ onRiders: () => { seg.set(third); view = third; render(); } });
+    const fresh = rideControls({ onRiders });
     controls.replaceWith(fresh); controls = fresh;
     renderChips();
     ({ map: mapView, speed: speedView, group: groupView, pillion: pillionView })[view]();
@@ -261,6 +300,7 @@ register('ride', (el) => {
     nav: () => { if (view === 'map') updateMapView(); },
     'ride-tick': () => { if (view === 'map') updateMapView(); },
     break: () => { if (view === 'pillion') render(); },
+    refill: renderChips,
     track: (pts) => map?.setTrack(pts),
     route: (r) => map?.setRoutes([r], 0, { fit: false, labels: false }),
     loc: (l) => { map?.upsertRider(l, { sos: ctx.sos.has(l.userId) }); if (view === 'group') groupView(); },
@@ -286,8 +326,9 @@ register('ridemap', (el, params) => {
   const recenter = iconButton('my_location', { label: 'Centre on me', style: 'surface', onclick: () => { if (ctx.pos) { map.setFollow(true); map.centerOn(ctx.pos.lng, ctx.pos.lat, 16); } } });
   const fit = iconButton('fit_screen', { label: 'Show everyone', style: 'surface', onclick: () => { map.setFollow(false); map.fitAll(); } });
   const closeBtn = iconButton('close_fullscreen', { label: 'Close full screen', style: 'surface', onclick: back });
+  const vg = voiceGuideButton({ getMode: engine.voiceGuide, setMode: engine.setVoiceGuide });
   const panel = h('div', { class: 'ride-panel' });
-  const fabs = h('div', { class: 'map-fab stack gap12' }, closeBtn, fit, recenter);
+  const fabs = h('div', { class: 'map-fab stack gap12' }, closeBtn, vg, fit, recenter);
   el.append(mapEl, top, fabs, panel);
   const map = new RideMap(mapEl, { zoom: 16, onFollowChange: (f) => recenter.classList.toggle('filled', f) });
   map.init();
@@ -388,4 +429,47 @@ register('sos', (el, params) => {
   setTimeout(() => { const top = current(); if (top?.name === 'sos') top.onBackBlocked = () => snackbar('Tap “I’m OK, cancel” to leave this screen.'); }, 0);
   if (params.now) setTimeout(send, 0); // from 30a crash detection: the countdown already ran
   return () => clearInterval(t);
+});
+
+// ---------------------------------------------------------------- 29 Full-screen speedometer
+register('ridegauge', (el) => {
+  if (!ctx.ride) { setTimeout(back, 0); return; }
+  el.classList.add('fs-gauge');
+  const gauge = speedGauge();
+  const ns = h('div');
+  const controls = rideControls({ onRiders: () => push('ridegroup') });
+  el.append(h('div', { class: 'fs-head' }, iconButton('close_fullscreen', { label: 'Close full screen', style: 'tonal', onclick: back }), h('span', { class: 'title-m' }, 'Speed'), h('span', { style: 'width:48px' })),
+    ns, h('div', { class: 'fs-gauge-body' }, gauge), gauge.statsEl, h('div', { style: 'padding:0 16px calc(16px + var(--safe-b))' }, controls));
+  const tick = () => { gauge.set(speedKmh()); gauge.stats(); ns.replaceChildren(maneuverCard(engine.navState()) || ''); };
+  tick();
+  const offs = onMany({ pos: tick, nav: tick, 'ride-tick': tick, ride: (r) => { if (!r) back(); } });
+  return () => { offs(); controls.cleanup?.(); };
+});
+
+// ---------------------------------------------------------------- 28 Full-screen group
+register('ridegroup', (el) => {
+  const g = ctx.ride?.solo ? null : ctx.group;
+  const list = h('div', { class: 'list' });
+  const controls = ctx.ride ? rideControls({ onRiders: () => {} }) : null;
+  el.append(h('header', { class: 'topbar' }, iconButton('close_fullscreen', { label: 'Close full screen', onclick: back }), h('h1', { class: 'title title-l' }, g ? g.name : 'Riders'),
+    iconButton('map', { label: 'Show riders on the map', onclick: () => push('ridemap') })),
+  h('div', { class: 'screen-body pad' }, list), controls ? h('div', { style: 'padding:0 16px calc(16px + var(--safe-b))' }, controls) : null);
+  const render = () => {
+    if (!g) { list.replaceChildren(h('div', { class: 'empty' }, ic('person'), h('p', { class: 'body-m' }, 'Solo ride: your location stays private.'))); return; }
+    const rows = [...g.members].sort((a, b) => (a.id === ctx.user.id ? -1 : b.id === ctx.user.id ? 1 : (b.online - a.online)));
+    list.replaceChildren(...rows.map((m) => {
+      const me = m.id === ctx.user.id, loc = ctx.locs.get(m.id);
+      const speaking = me ? engine.ptt.active : ctx.speaking === m.id;
+      const spd = me ? (ctx.pos?.speed || 0) : (loc?.speed || 0);
+      const dist = !me && loc && ctx.pos ? haversine([ctx.pos.lat, ctx.pos.lng], [loc.lat, loc.lng]) : null;
+      return h('div', { class: `rider-row big${ctx.sos.has(m.id) ? ' selected' : ''}` },
+        avatar(me ? ctx.user.name : m.name, { status: ctx.sos.has(m.id) ? 'off' : speaking ? 'speaking' : me || m.online ? 'connected' : 'off', size: 'l', color: m.color }),
+        h('span', { class: 'main' }, h('span', { class: 'title-m' }, me ? 'You' : m.name),
+          h('span', { class: 'body-m variant' }, ctx.sos.has(m.id) ? 'SOS · needs help' : [speaking ? 'Speaking' : m.online || me ? 'Connected' : 'Disconnected', dist != null ? `${fmtDist(dist).replace('now', 'with you')}${dist >= 50 ? ' away' : ''}` : null].filter(Boolean).join(' · '))),
+        h('span', { class: 'speed-chip' }, h('b', { class: 'tabular' }, String(Math.round(spd * 3.6))), h('span', { class: 'body-s' }, 'km/h')));
+    }));
+  };
+  render();
+  const offs = onMany({ loc: render, group: render, speaking: render, talking: render, sos: render, 'sos-cancel': render, pos: render });
+  return () => { offs(); controls?.cleanup?.(); };
 });

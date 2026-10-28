@@ -30,7 +30,19 @@ SOS countdown and ride summary.
 - **Groups:** Chat · Rides · Members · Shared tabs; group info; leader tools (rename, remove a rider, hand over, new code, delete); split expenses with who-owes-whom; shared places (meet points, fuel, dhabas); make a group with riders nearby, no code
 - **Ride:** pick who's riding today (they get a "… started a ride · Join" invite), choose a destination by dropping a pin, a Pillion tab with break reminders, crash detection (30 s countdown, then SOS), and an Arrived screen
 - **Account:** Terms & privacy before you start, sign in on another phone with your account code, delete account
-- **Settings:** Account, Appearance, Riding & directions, Safety & SOS, Location & privacy, Audio & headset, Offline & storage, About, and Customer care with the Rylaide Assistant (guided fixes, then email Relaide.com@gmail.com)
+- **Settings:** Account, Appearance, Riding & directions, Safety & SOS, Location & privacy, Audio & headset, Offline & storage, About, and Customer care with the Rylaide Assistant (guided fixes, then a report straight to Rylaide support)
+- **Voice:** push-to-talk streams while you speak (about half a second mouth-to-ear), Opus at 48 kbps, with noise cancellation: wind filter + RNNoise (AI noise removal) + gate and compressor. The mic stays ready during a group ride so the first word isn't cut
+- **Voice guidance button on the map** (like Google Maps): Sound on · Alerts only · Muted
+
+**Screen flow** follows the Figma *Navigation map · for development*:
+- Account: 01 → 02–04 → 04b Before you start → 05 Sign in or 06 Create account → 07 Setup → 07a Bikes (several) · 07b Permissions → 08 Home
+- Ride: 13 Start ride (pick the bike; Solo · Group · Quick) → group 15 My groups / 16 Nearby → 17 Select riders → 18 Ready → 19 Conditions (pillion) → 20 Checklist → 21 Headset → 22 Where to / 22e Pin → 23 Place → 24 Routes → 25t/25u/25r hub; Quick → 25q (Map · Speed, refills) → 34q
+- In the hub: 25 full-screen map, 29 full-screen speedometer, 28 full-screen group; End ride → 33 / 32 Arrived → 34 Summary → Home
+- Groups: 38 → 40 New group → invite → G01 (Chat · Rides · Members · Shared) → 39 Info → 41 Members · 39c Expenses · G14 Settings
+- Garage: 12 My vehicles → 11 Vehicle → 11d Fuel · 11e/11f Add/Edit · 11j Service. Settings: 08 → 43 → 44–58
+- Each bottom tab remembers where you were; tapping the tab you're on goes back to its first screen
+
+**Support email:** none yet. Set `SUPPORT_EMAIL` on the server when the Rylaide address exists; until then reports are stored on the server (read them with `GET /api/admin/reports` and header `x-admin-key: <ADMIN_KEY>`).
 
 ## Run it locally
 
@@ -73,11 +85,29 @@ in the app: *Settings → App server*, or the connect screen that shows when the
 > The Kotlin code is type-checked against the Android 34 API, but this environment can’t download the Android SDK,
 > so the first full Gradle build happens in your Android Studio. If it reports anything, send the message over.
 
+## API for the app
+
+Everything the app does goes through a documented API you can call from Kotlin:
+
+- **Docs:** `https://rylaide.onrender.com/api/docs` (or `http://localhost:3000/api/docs`)
+- **Spec:** `/api/v1/openapi.json` (OpenAPI 3, import into Postman or Android Studio's HTTP client)
+- **Kotlin client:** `android/app/src/main/java/com/rylaide/app/api/RylaideApi.kt`, no extra libraries:
+
+```kotlin
+val api = RylaideApi(BuildConfig.SERVER_URL)
+api.call({ it.signIn("K7QM-4XPA"); it.vehicles() }) { result ->
+    result.onSuccess { garage -> /* garage.getJSONArray("vehicles") */ }
+          .onFailure { e -> /* show e.message */ }
+}
+```
+
+- **Realtime** (location, chat, SOS, streamed push-to-talk) is a WebSocket at `/ws?token=…`; the message format is in the docs, including the `vchunk` voice stream your native audio code can send and play.
+
 ## Tests
 
 ```bash
-npm test                 # 21 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
-npm run test:e2e         # 19 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm test                 # 25 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm run test:e2e         # 20 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
 
@@ -152,6 +182,8 @@ Running it on your own computer needs none of this: without `DATABASE_URL` it sa
 | `DATABASE_URL` | none | Postgres connection string. When set, all data and bike photos are stored there (needed on free hosting) |
 | `PHOTO_DIR` | `photos/` next to `DATA_FILE` | Riders' bike photos when there's no `DATABASE_URL` |
 | `KEEP_AWAKE` | on (on Render) | `off` lets a free Render server sleep when idle |
+| `SUPPORT_EMAIL` | none | Shown in Customer care once the Rylaide support address exists |
+| `ADMIN_KEY` | none | Lets you read support reports at `/api/admin/reports` |
 | `USER_AGENT` | repo URL | Sent to map services; include a contact email |
 | `OSRM_URL` | public OSRM demo | Routing server |
 | `NOMINATIM_URL` | public Nominatim | Place search |
@@ -203,7 +235,9 @@ web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), u
 web/js/screens/  onboarding (+ terms, sign in), home, groups, groupinfo (info, members, expenses, settings), history (+ summary),
           vehicles (garage, vehicle, service), garage (fuel, contacts, mic test), settings (hub + pages, customer care),
           setup, ride, extra (crash, arrived, nearby, drop a pin)
-server/features.js  vehicles, service, group tools, expenses, shared places, sign-in code, nearby, reverse geocode
+server/features.js  vehicles, service, group tools, expenses, shared places, sign-in code, nearby, reverse geocode, support
+server/openapi.js   API description (served at /api/v1/openapi.json and /api/docs)
+android/app/src/main/java/com/rylaide/app/api/RylaideApi.kt  Kotlin API client
 web/js/vehicles.js  vehicle catalogue, type detection, Home picture · bikeform.js  the bike form
 android/  Android Studio project: MainActivity (WebView), RylaideBridge (speech, vibration, share, keep awake)
 tests/    api.test.js (node:test), e2e.py (Playwright, two riders)

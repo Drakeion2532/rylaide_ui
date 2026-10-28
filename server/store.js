@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const EMPTY = () => ({ users: [], groups: [], messages: [], rides: [], fuel: [], contacts: {}, service: [], expenses: [], shared: [] });
+const EMPTY = () => ({ users: [], groups: [], messages: [], rides: [], fuel: [], contacts: {}, service: [], expenses: [], shared: [], reports: [] });
 
 class Store {
   /** @param {string} file JSON file. @param {{remote?: import('./pg').PgBackend}} opts */

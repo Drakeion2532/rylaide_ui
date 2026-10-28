@@ -1,12 +1,13 @@
 // 38 My groups → G01 Group space (Chat · Rides · Members · Shared are tabs) → 39 Group info (groupinfo.js) · 16 Nearby
-import { h, fmtDist, haversine, fmtTime, fmtKm, durShort } from '../util.js';
+import { h, fmtDist, haversine, fmtTime, fmtKm, durShort, shareText } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, on, onMany } from '../state.js';
-import { ic, button, iconButton, listItem, avatar, avatarStack, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll, sectionTitle } from '../ui.js';
-import { register, push, back } from '../router.js';
+import { ic, button, iconButton, listItem, avatar, avatarStack, field, sheet, dialog, snackbar, segmented, withLoading, liftOnScroll, sectionTitle, page } from '../ui.js';
+import { register, push, back, upTo } from '../router.js';
 import * as engine from '../engine.js';
 
 export function newGroupSheet({ stay } = {}) {
+  if (!stay) { push('newgroup'); return; } // 40 New group flow (full screen); the sheet stays for quick creation inside ride setup
   sheet((close) => {
     const name = field({ label: 'Group name', attrs: { maxlength: 40 }, support: 'For example Weekend Riders', onSurface: true });
     const go = button('Create group', { size: 'large', wide: true, type: 'submit' });
@@ -66,7 +67,7 @@ register('group', (el, params) => {
   let view = { invite: 'members', riders: 'members' }[params.tab] || params.tab || 'chat';
   if (params.tab === 'invite') setTimeout(() => push('invite', { id: g0.id }), 0);
   const title = h('button', { type: 'button', class: 'title title-l group-title', 'aria-label': 'Group info', onclick: () => push('groupinfo', { id: g0.id }) }, g0.name);
-  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: back }), title,
+  const bar = h('header', { class: 'topbar' }, iconButton('arrow_back', { label: 'Back', onclick: () => upTo('groups') }), title, // G01 → 38
     iconButton('person_add', { label: 'Invite riders', onclick: () => push('invite', { id: g0.id }) }),
     iconButton('info', { label: 'Group info', onclick: () => push('groupinfo', { id: g0.id }) }));
   const seg = segmented([{ value: 'chat', label: 'Chat' }, { value: 'rides', label: 'Rides' }, { value: 'members', label: 'Members' }, { value: 'shared', label: 'Shared' }], view, (v) => show(v), { label: 'Group sections' });
@@ -203,4 +204,40 @@ register('group', (el, params) => {
     'group-data': (d) => d.groupId === params.id && d.kind === 'shared' && view === 'shared' && renderShared(),
   });
   return () => { ctx.chatOpen = false; offs(); };
+});
+
+// ---------------------------------------------------------------- 40 New group → 40b Invite riders → G01 (Up: → 38)
+register('newgroup', (el) => {
+  const { body, setTitle } = page(el, 'New group', { back });
+  const steps = h('div', { class: 'steps-bar', 'aria-hidden': 'true', style: 'margin:0 16px' }, h('i', { class: 'on' }), h('i'));
+  el.insertBefore(steps, body);
+  const name = field({ label: 'Group name', attrs: { maxlength: 40, name: 'name' }, support: 'For example Weekend Riders' });
+  const desc = field({ label: 'Description', attrs: { maxlength: 200, name: 'description' }, support: 'Optional: where and when you ride' });
+  const go = button('Create group', { size: 'large', wide: true, type: 'submit' });
+  body.append(h('form', { class: 'stack gap16', style: 'margin-top:16px', novalidate: true, onsubmit: async (e) => {
+    e.preventDefault();
+    if (!name.input.value.trim()) return name.setError('Give the group a name.');
+    await withLoading(go, async () => {
+      try {
+        const g = await engine.createGroup(name.input.value);
+        if (desc.input.value.trim()) { try { await api.patch(`/api/groups/${g.id}`, { description: desc.input.value }); await engine.refreshGroup(g.id); } catch { /* optional */ } }
+        invite(g);
+      } catch (err) { name.setError(err.message); }
+    });
+  } }, h('h1', { class: 'headline-m', style: 'margin:0' }, 'Name your group'), name, desc, go));
+  setTimeout(() => name.input.focus(), 350);
+  const invite = (g) => {
+    setTitle('Invite riders');
+    steps.lastChild.classList.add('on');
+    const qr = h('img', { class: 'qr-box', alt: `QR code to join ${g.name}` });
+    fetch(`/api/groups/${g.id}/qr.svg`, { headers: { authorization: `Bearer ${api.token}` } }).then((r) => (r.ok ? r.blob() : null)).then((b) => { if (b) qr.src = URL.createObjectURL(b); }).catch(() => {});
+    body.replaceChildren(h('div', { class: 'stack gap16 step-in-fwd', style: 'align-items:center;text-align:center;padding:16px 0 32px', 'data-invite': '' },
+      h('h1', { class: 'headline-m', style: 'margin:0' }, `${g.name} is ready`), qr,
+      h('div', {}, h('div', { class: 'label-l variant' }, 'Group code'), h('div', { class: 'code-big' }, g.code)),
+      h('p', { class: 'body-m variant' }, 'Riders scan the QR code, open the link, or type the code in Groups → Join.'),
+      button('Share invite', { size: 'large', icon: 'share', wide: true, onclick: async () => {
+        if ((await shareText({ title: 'Join my ride', text: `Ride with me on Rylaide. Join “${g.name}” with code ${g.code}`, url: `${location.origin}/?join=${g.code}` })) === 'copied') snackbar('Invite link copied');
+      } })));
+    el.append(h('div', { class: 'screen-foot' }, button('Go to the group', { size: 'large', wide: true, style: 'tonal', onclick: () => push('group', { id: g.id }, { replace: true }) })));
+  };
 });

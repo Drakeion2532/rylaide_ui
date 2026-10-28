@@ -34,22 +34,64 @@ function animateOut(entry, cls) {
   try { entry.cleanup?.(); } catch { /* ignore */ }
 }
 
-/** Switch bottom tab. Resets to the tab's root screen. */
+const parked = {}; // tab -> saved stack (Figma: "save and restore each tab's state")
+
+function destroy(e) { try { e.cleanup?.(); } catch { /* ignore */ } e.el.remove(); }
+function park(list) { for (const e of list) { e.el.classList.add('parked'); e.el.inert = true; } }
+
+/**
+ * Switch bottom tab (fade-through 200 ms). Switching restores where you were on that tab;
+ * tapping the tab you're on goes back to its first screen. Non-tab roots (welcome, setup) clear everything.
+ */
 export function tab(name, { force } = {}) {
   const stage = document.getElementById('stage');
   const top = current();
+  const isTab = TABS.includes(name);
   if (!force && top && top.name === name && stack.length === 1) return;
-  const entry = mount(name, {});
-  while (stack.length) {
-    const e = stack.pop();
-    if (e === top) animateOut(e, 'exit-fade'); else { try { e.cleanup?.(); } catch { /* ignore */ } e.el.remove(); }
+  const leaving = stack.splice(0);
+  const sameTab = isTab && leaving[0]?.name === name; // tapping the tab you're on
+  if (!force && isTab && !sameTab && TABS.includes(leaving[0]?.name)) {
+    // switching tabs: keep where you were
+    if (top) { top.el.classList.add('exit-fade'); setTimeout(() => top.el.classList.remove('exit-fade'), 220); }
+    const key = leaving[0].name;
+    parked[key] = leaving;
+    setTimeout(() => { if (parked[key] === leaving) park(leaving); }, top ? 200 : 0); // not if already restored
+  } else if (!force && sameTab) {
+    // re-tap: back to the tab's first screen
+    for (const e of leaving.slice(1)) (e === top ? animateOut(e, 'exit-back') : destroy(e));
+  } else {
+    for (const e of leaving) (e === top ? animateOut(e, 'exit-fade') : destroy(e));
   }
-  stack.push(entry);
-  entry.el.classList.add('enter-fade');
-  stage.append(entry.el);
-  if (TABS.includes(name)) currentTab = name;
-  navbarRender(currentTab, TABS.includes(name));
-  history.replaceState({ depth: 0 }, '');
+  if (!isTab) { for (const k of Object.keys(parked)) { parked[k].forEach(destroy); delete parked[k]; } }
+  else if (force && parked[name]) { parked[name].forEach(destroy); delete parked[name]; }
+  // arriving
+  if (!force && isTab && parked[name]) {
+    const restored = parked[name];
+    delete parked[name];
+    for (const e of restored) { e.el.classList.remove('parked'); e.el.inert = true; }
+    stack.push(...restored);
+    const t = current();
+    t.el.inert = false;
+    t.el.classList.remove('exit-forward', 'enter-forward', 'enter-back');
+    t.el.classList.add('enter-fade'); setTimeout(() => t.el.classList.remove('enter-fade'), 220);
+    t.onResume?.();
+  } else if (!force && sameTab) {
+    const root = leaving[0];
+    root.el.inert = false;
+    root.el.classList.remove('exit-forward', 'parked');
+    root.el.classList.add('enter-back'); setTimeout(() => root.el.classList.remove('enter-back'), 320);
+    stack.push(root);
+    root.onResume?.();
+  } else {
+    const entry = mount(name, {});
+    stack.push(entry);
+    entry.el.classList.add('enter-fade');
+    stage.append(entry.el);
+  }
+  if (isTab) currentTab = name;
+  const t = current();
+  navbarRender(currentTab, isTab && !t.full);
+  history.replaceState({ depth: stack.length - 1 }, '');
 }
 
 /** Open a child screen on top (slide in). opts.full hides the bottom nav (ride screens, setup flow). */
@@ -103,3 +145,13 @@ window.addEventListener('popstate', () => {
   if (blocked) { history.pushState({ depth: stack.length - 1 }, ''); current()?.onBackBlocked?.(); return; }
   if (!back() && stack.length <= 1 && currentTab === 'home') { /* leave the app: let the browser handle it */ }
 });
+
+/**
+ * Up to a fixed parent (Figma: "every other screen has one fixed parent"). If the parent screen is
+ * underneath, pop back to it; otherwise open the parent's tab.
+ */
+export function upTo(name, tabName = name) {
+  const i = stack.map((e) => e.name).lastIndexOf(name);
+  if (i >= 0 && i < stack.length - 1) { while (stack.length - 1 > i + 1) { const e = stack.splice(stack.length - 2, 1)[0]; try { e.cleanup?.(); } catch { /* ignore */ } e.el.remove(); } back(); return; }
+  tab(tabName, { force: true });
+}

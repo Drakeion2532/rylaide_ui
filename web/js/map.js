@@ -73,7 +73,7 @@ export class RideMap {
   fail() { this.el.append(h('p', { class: 'map-fallback-note body-m' }, 'The map can’t be shown on this device.')); return false; }
   when(f) { this.ready ? f() : this.queue.push(f); }
   destroy() { this.themeOff?.(); try { this.map?.remove(); } catch { /* ignore */ } this.map = null; }
-  resize() { this.when(() => this.map.resize()); }
+  resize() { this.when(() => this.map?.resize()); }
 
   async retheme() {
     if (!this.map) return;

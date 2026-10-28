@@ -1,23 +1,23 @@
 // 08 → 43 Settings → 44–59 (Figma navigation map: every settings page goes Up to 43; 43 → Home)
 //   44 Account · 45 Appearance · 46 Riding & directions · 47 Safety & SOS · 48 Location & privacy · 49 Audio & headset
-//   54 Offline & storage · 55 About (56 Terms · 57 Privacy) · 58 Customer care → 58b Rylaide Assistant → 58c fix → 58e solved / 58d email
+//   54 Offline & storage · 55 About (56 Terms · 57 Privacy) · 58 Customer care → 58b Rylaide Assistant → 58c fix → 58e solved / 58d contact support
 import { h, store, native } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, emit, setting, setSetting } from '../state.js';
 import { ACCENTS, applyTheme, currentLight } from '../theme.js';
-import { ic, button, listItem, switchEl, field, dialog, snackbar, segmented, withLoading, avatar, page, sectionTitle, sheet } from '../ui.js';
-import { register, push, back } from '../router.js';
-import { SUPPORT_EMAIL } from '../legal.js';
+import { ic, button, listItem, switchEl, field, dialog, snackbar, segmented, withLoading, avatar, page, sectionTitle, sheet, VOICE_MODES } from '../ui.js';
+import { register, push, back, upTo } from '../router.js';
+import { supportEmail } from '../legal.js';
 import * as engine from '../engine.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const go = (name, params) => () => push(name, params);
 const row = (icon, title, sub, name, params) => listItem({ icon, title, sub, trail: ic('chevron_right'), onclick: go(name, params), attrs: { 'data-page': name } });
 const toggle = (icon, title, sub, key, def, after) => listItem({ icon, title, sub, trail: switchEl({ checked: setting(key, def), label: title, onchange: (v) => { setSetting(key, v); after?.(v); } }) });
 
 // ---------------------------------------------------------------- 43 Settings
 register('settings', (el) => {
-  const { body } = page(el, 'Settings', { back });
+  const { body } = page(el, 'Settings', { back: () => upTo('home') }); // 43 → Home
   const render = () => {
     const u = ctx.user;
     body.replaceChildren(
@@ -35,7 +35,7 @@ register('settings', (el) => {
         row('cloud_download', 'Offline & storage', 'Saved maps, unsent rides', 'storage')),
       sectionTitle('Help'),
       h('div', { class: 'list' },
-        row('support_agent', 'Customer care', 'Rylaide Assistant, email us', 'care'),
+        row('support_agent', 'Customer care', 'Rylaide Assistant, contact support', 'care'),
         row('info', 'About Rylaide', `Version ${VERSION} · terms and privacy`, 'about'),
         native() ? listItem({ icon: 'dns', title: 'App server', sub: (() => { try { return native().serverUrl(); } catch { return location.origin; } })(), trail: ic('chevron_right'), onclick: () => native().openServerSettings() }) : null),
       h('div', { style: 'height:32px' }));
@@ -133,8 +133,9 @@ register('riding', (el) => {
   body.append(
     sectionTitle('Directions'),
     h('div', { class: 'list' },
-      toggle('record_voice_over', 'Spoken directions', 'Turn-by-turn in your headset', 'speak', true),
-      listItem({ icon: 'volume_up', title: 'Test the voice', sub: 'Hear how directions sound', onclick: () => { const was = setting('speak', true); setSetting('speak', true); engine.speak('In 500 metres, turn left onto Ghat Road.'); setSetting('speak', was); } })),
+      listItem({ icon: 'volume_up', title: 'Test the voice', sub: 'Hear how directions sound', onclick: () => engine.speak('In 500 metres, turn left onto Ghat Road.', 'nav', { force: true }) })),
+    h('div', { style: 'padding:12px 4px 0' }, h('div', { class: 'label-l variant', style: 'margin-bottom:8px' }, 'Voice guidance (also on the map while riding)'),
+      segmented(VOICE_MODES.map((m) => ({ value: m.value, label: m.label })), engine.voiceGuide(), (v) => engine.setVoiceGuide(v), { label: 'Voice guidance' })),
     sectionTitle('Breaks'),
     h('div', { class: 'list' }, toggle('free_breakfast', 'Break reminders', 'On every ride. Always on when you ride with a pillion.', 'breaks', false)),
     h('div', { style: 'padding:12px 4px 0' }, h('div', { class: 'label-l variant', style: 'margin-bottom:8px' }, 'Remind me every'),
@@ -188,8 +189,8 @@ register('audio', (el) => {
     h('div', { class: 'list mt8' }, row('mic', 'Mic test', 'Check your helmet headset', 'mictest')),
     sectionTitle('Voice chat'),
     h('div', { class: 'list' },
-      listItem({ icon: 'campaign', title: 'Hear my group', sub: 'Play riders’ voice messages as they arrive', trail: switchEl({ checked: ctx.voiceOn, label: 'Hear my group', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); } }) }),
-      listItem({ icon: 'noise_control_off', title: 'Noise cancel', sub: 'Reduce wind noise when you talk', trail: switchEl({ checked: ctx.noiseCancel, label: 'Noise cancel', onchange: (v) => { ctx.noiseCancel = v; store.set('noiseCancel', v); } }) })),
+      listItem({ icon: 'campaign', title: 'Hear my group', sub: 'Play riders’ voice messages as they arrive', trail: switchEl({ checked: ctx.voiceOn, label: 'Hear my group', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); } }) }),
+      listItem({ icon: 'noise_control_off', title: 'Noise cancel', sub: 'Reduce wind noise when you talk', trail: switchEl({ checked: ctx.noiseCancel, label: 'Noise cancel', onchange: (v) => { ctx.noiseCancel = v; store.set('noiseCancel', v); engine.ptt.chain.setNoiseCancel(v); } }) })),
     h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Pair your helmet headset with Bluetooth before you start. Rylaide uses whatever microphone and speaker your phone is using.'));
 });
 
@@ -230,7 +231,7 @@ register('about', (el) => {
     h('div', { class: 'list mt16' },
       row('description', 'Terms of use', null, 'legal', { doc: 'terms' }),
       row('policy', 'Privacy notice', null, 'legal', { doc: 'privacy' }),
-      row('support_agent', 'Customer care', SUPPORT_EMAIL, 'care')),
+      row('support_agent', 'Customer care', 'Rylaide Assistant, contact support', 'care')),
     sectionTitle('Credits'),
     h('p', { class: 'body-s variant', style: 'padding:0 4px 32px;line-height:1.6' }, 'Map data © OpenStreetMap contributors · map tiles by OpenFreeMap · routing by OSRM · place search by Nominatim · weather by MET Norway · photos from Unsplash · icons: Material Symbols · fonts: Google Sans Flex and Roboto.'));
 });
@@ -282,10 +283,10 @@ register('care', (el) => {
     h('div', { class: 'care-hero' }, ic('support_agent', { size: 40 }), h('div', {}, h('div', { class: 'title-l' }, `Hi ${ctx.user.name.split(' ')[0]}, how can we help?`), h('div', { class: 'body-m variant' }, 'Most problems are fixed in a minute with the Rylaide Assistant.'))),
     h('div', { class: 'stack gap8 mt16' },
       button('Ask the Rylaide Assistant', { size: 'large', wide: true, icon: 'smart_toy', onclick: go('assistant') }),
-      button('Email us', { size: 'large', wide: true, style: 'outlined', icon: 'mail', onclick: go('careemail', { topic: 'other' }) })),
+      button('Contact support', { size: 'large', wide: true, style: 'outlined', icon: 'forum', onclick: go('careemail', { topic: 'other' }) })),
     sectionTitle('Common questions'),
     h('div', { class: 'list' }, TOPICS.filter((t) => !t.email).slice(0, 4).map((t) => listItem({ icon: t.icon, title: t.title, trail: ic('chevron_right'), onclick: go('carefix', { topic: t.id }) }))),
-    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, `Payments and refunds are always handled by email: ${SUPPORT_EMAIL}. We reply within 2 working days.`));
+    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Payments and refunds are always handled by Rylaide support, never by the Assistant. We reply within 2 working days.'));
 });
 
 // 58b Rylaide Assistant: pick what's wrong → guided fix (58c)
@@ -325,25 +326,41 @@ register('caresolved', (el, params) => {
   h('div', { class: 'screen-foot stack gap8' }, button('Done', { size: 'large', wide: true, onclick: back }), button('Something else is wrong', { style: 'text', wide: true, onclick: () => push('assistant', {}, { replace: true }) })));
 });
 
-// 58d Email us (prefilled with what helps us answer)
+// 58d Contact support: the report goes to Rylaide's server (and to the support email once one is set)
 register('careemail', (el, params) => {
   const t = TOPICS.find((x) => x.id === params.topic) || TOPICS[TOPICS.length - 1];
-  const { body } = page(el, 'Email us', { back });
+  const { body } = page(el, 'Contact support', { back });
   const msg = h('textarea', { rows: 6, maxlength: 2000, placeholder: ' ', name: 'message', style: 'resize:vertical' });
   const msgF = h('label', { class: 'field textarea' }, msg, h('label', {}, 'What happened?'));
+  const reply = field({ label: params.signedOut ? 'How can we reach you?' : 'Reply to (optional)', attrs: { maxlength: 120, name: 'contact', autocomplete: 'email' }, support: 'Phone number or email' });
+  const u = ctx.user;
   const info = [
-    `Topic: ${t.title}`, params.tried ? 'Tried the Assistant’s steps: yes' : null, `Rider: ${ctx.user.name} (${ctx.user.id})`,
+    `Topic: ${t.title}`, params.tried ? 'Tried the Assistant’s steps: yes' : null, u ? `Rider: ${u.name} (${u.id})` : 'Not signed in',
     `App: Rylaide ${VERSION}${native() ? ' · Android app' : ' · web'}`, `Phone: ${navigator.userAgent.replace(/\) .*/, ')')}`, `Connection: ${ctx.conn} · GPS: ${ctx.gps || 'unknown'}`,
   ].filter(Boolean).join('\n');
-  const send = button('Open my email app', { size: 'large', wide: true, icon: 'send', onclick: () => {
-    const href = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`Rylaide: ${t.title}`)}&body=${encodeURIComponent(`${msg.value.trim()}\n\n---\n${info}`)}`;
-    location.href = href;
-    setTimeout(() => snackbar(`If nothing opened, write to ${SUPPORT_EMAIL}`, { ms: 8000 }), 1200);
-  } });
+  const send = button('Send to Rylaide support', { size: 'large', wide: true, icon: 'send' });
+  send.onclick = () => withLoading(send, async () => {
+    if (msg.value.trim().length < 5) { msgF.classList.add('error'); snackbar('Tell us a little about what happened.'); return; }
+    if (params.signedOut && reply.input.value.trim().length < 5) return reply.setError('We need a way to reach you.');
+    try {
+      const r = await api.post('/api/support', { topic: t.id, message: msg.value.trim(), contact: reply.input.value.trim(), info });
+      push('caresent', { ref: r.ref }, { replace: true });
+    } catch (e) { snackbar(e.message); }
+  });
+  const mail = supportEmail();
   body.append(
-    h('p', { class: 'body-m variant', style: 'margin:8px 0 16px' }, t.id === 'refund' ? 'Payments and refunds are always handled by email so we can check the details with you.' : 'Tell us what happened and what you expected. We reply within 2 working days.'),
-    h('div', { class: 'list' }, listItem({ icon: 'mail', title: 'To', sub: SUPPORT_EMAIL }), listItem({ icon: t.icon, title: 'About', sub: t.title })),
-    h('div', { class: 'mt16' }, msgF),
-    h('details', { class: 'body-s variant', style: 'margin:12px 4px' }, h('summary', {}, 'Details we add to help'), h('pre', { style: 'white-space:pre-wrap;font:inherit;margin:8px 0 0' }, info)));
+    h('p', { class: 'body-m variant', style: 'margin:8px 0 16px' }, t.id === 'refund' ? 'Payments and refunds are always handled by Rylaide support so we can check the details with you.' : 'Tell us what happened and what you expected. We reply within 2 working days.'),
+    h('div', { class: 'list' }, listItem({ icon: t.icon, title: 'About', sub: t.title })),
+    h('div', { class: 'mt16 stack gap16' }, msgF, reply),
+    h('details', { class: 'body-s variant', style: 'margin:12px 4px' }, h('summary', {}, 'Details we add to help'), h('pre', { style: 'white-space:pre-wrap;font:inherit;margin:8px 0 0' }, info)),
+    mail ? h('p', { class: 'body-s variant', style: 'margin:0 4px 24px' }, 'Prefer email? ', h('a', { href: `mailto:${mail}?subject=${encodeURIComponent(`Rylaide: ${t.title}`)}&body=${encodeURIComponent(`\n\n---\n${info}`)}` }, mail)) : null);
   el.append(h('div', { class: 'screen-foot' }, send));
+});
+
+register('caresent', (el, params) => {
+  el.append(h('div', { class: 'screen-body pad', style: 'display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:12px' },
+    h('span', { class: 'solved-mark' }, ic('mark_email_read', { size: 48 })),
+    h('h1', { class: 'headline-m', style: 'margin:8px 0 0' }, 'Sent to Rylaide support'),
+    h('p', { class: 'body-m variant', style: 'max-width:300px' }, `Your reference is ${params.ref}. We reply within 2 working days.`)),
+  h('div', { class: 'screen-foot' }, button('Done', { size: 'large', wide: true, onclick: back })));
 });

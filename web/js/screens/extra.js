@@ -26,7 +26,7 @@ register('crash', (el, params) => {
   el.append(h('div', { class: 'screen-body' }, ic('car_crash', { size: 40 }), title, r, desc, note), h('div', { class: 'screen-foot stack gap8' }, cancel, sendNow));
   requestAnimationFrame(() => { r.querySelector('.bar').style.transitionDuration = `${SECS}s`; r.set(0); });
   if (!params.test && ctx.pos) api.get(`/api/reverse?lat=${ctx.pos.lat}&lng=${ctx.pos.lng}`).then((p) => { if (!done) where.textContent = ` near ${engine.short(p.name)}`; }).catch(() => {});
-  engine.speak(params.test ? 'Crash detection test.' : 'Possible crash detected. Tap I am OK if you are fine.');
+  engine.speak(params.test ? 'Crash detection test.' : 'Possible crash detected. Tap I am OK if you are fine.', 'alert');
 
   // Alarm: rising beeps, louder in the last 10 seconds.
   let audio = null;

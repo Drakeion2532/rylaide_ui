@@ -1,7 +1,7 @@
 // Ride engine: location, live group, recording, navigation, voice, SOS. Screens listen through state.on().
 import { store, haversine, distToLine, fmtDist, vibrate, native } from './util.js';
 import { api } from './api.js';
-import { ctx, rt, emit, setting } from './state.js';
+import { ctx, rt, emit, setting, setSetting } from './state.js';
 import { PushToTalk, VoicePlayer } from './voice.js';
 import { setThemePosition } from './theme.js';
 
@@ -98,7 +98,9 @@ export function wireRealtime() {
     emit('chat', m.message);
   });
   rt.on('typing', (m) => emit('typing', m));
-  rt.on('voice', (m) => { if (ctx.voiceOn) player.enqueue(m); });
+  rt.on('voice', (m) => { if (ctx.voiceOn) player.enqueue(m); }); // older apps: whole clip after release
+  rt.on('vchunk', (m) => { if (ctx.voiceOn) player.chunk(m); });  // streamed while the rider talks
+  rt.on('vcancel', (m) => player.cancel(m.sid));
   rt.on('sos', (m) => onSos(m.alert));
   rt.on('sos_cancel', (m) => { ctx.sos.delete(m.userId); emit('sos-cancel', m.userId); });
   rt.on('error', (m) => emit('snack', m.error));
@@ -222,12 +224,24 @@ export function startRide({ dest = null, route = null, solo = !ctx.group, pillio
   store.set('activeRide', { startedAt: ctx.ride.startedAt });
   requestWakeLock();
   crash.start();
+  voiceReady(true);
   // Group ride: tell the riders picked in 17 Select riders (they get "… started a ride · Join").
   if (!solo && ctx.group) {
     api.post(`/api/groups/${ctx.group.id}/ride`, { riders: riders || onlineRiders().map((m) => m.id), destination: dest ? short(dest.name) : null, lat: dest?.lat, lng: dest?.lng }).catch(() => {});
   }
   if (route) speak(`Starting navigation to ${short(dest.name)}. ${route.steps[ctx.ride.k]?.instruction || ''}`);
   emit('ride', ctx.ride);
+}
+
+/** 25q refills: a fill-up during the ride goes into the bike's fuel log; the odometer is estimated from the ride. */
+export async function logRefill({ litres, pricePerLitre, full = true }) {
+  const r = ctx.ride;
+  const v = ctx.user?.vehicle;
+  const odometer = (v?.odometer || 0) + (r ? r.dist / 1000 : 0) + 0.1;
+  const d = await api.post('/api/fuel', { vehicleId: v?.id, odometer: +odometer.toFixed(1), litres, pricePerLitre, full, estimated: true });
+  if (d.user) { ctx.user = d.user; store.set('user', d.user); emit('user', d.user); }
+  if (r) { (r.refills ||= []).push({ litres: +litres, cost: +(litres * pricePerLitre).toFixed(2), at: Date.now() }); emit('refill', r); }
+  return d;
 }
 
 /** 32 Arrived → Keep riding: stop directions, keep recording. */
@@ -243,7 +257,7 @@ setInterval(() => {
   const r = ctx.ride;
   if (!r || !(r.pillion || setting('breaks', false)) || Date.now() < r.nextBreak) return;
   r.nextBreak = Date.now() + setting('breakMins', 45) * 60e3;
-  speak(r.pillion ? 'Time for a short break. Check on your pillion.' : 'Time for a short break.');
+  speak(r.pillion ? 'Time for a short break. Check on your pillion.' : 'Time for a short break.', 'alert');
   vibrate([200, 100, 200]);
   emit('banner', { tone: 'warn', icon: 'free_breakfast', title: 'Time for a break', sub: r.pillion ? 'Stop safely, stretch and check on your pillion' : 'Stop safely and stretch for a few minutes', ms: 15000 });
   emit('break', r);
@@ -303,13 +317,14 @@ export async function endRide() {
   store.del('activeRide');
   releaseWakeLock();
   crash.stop();
+  voiceReady(false);
   if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
   const duration = (Date.now() - r.startedAt) / 1000;
   const payload = {
     points: r.points, duration, maxSpeed: r.maxSpeed, startedAt: r.startedAt,
     destination: r.dest ? short(r.dest.name) : null, origin: r.origin, groupName: r.groupName,
-    groupId: r.groupId, vehicleId: r.vehicleId, pillion: r.pillion,
+    groupId: r.groupId, vehicleId: r.vehicleId, pillion: r.pillion, quick: !!r.quick, refills: r.refills || [],
   };
   if (r.points.length < 2 || r.dist < 50) return { tooShort: true, duration, distance: Math.round(r.dist) };
   try {
@@ -336,8 +351,19 @@ window.addEventListener('online', flushUnsentRides);
 // ---------------------------------------------------------------- navigation
 export const short = (name = '') => name.split(',')[0].trim();
 
-export function speak(text) {
-  if (!setting('speak', true)) return;
+/**
+ * Voice guidance, like Google Maps: 'on' (directions + alerts), 'alerts' (only safety alerts, no turn-by-turn), 'off'.
+ * kind: 'nav' for directions, 'alert' for arrival, rerouting, breaks, crash and SOS.
+ */
+export const voiceGuide = () => setting('voiceGuide', setting('speak', true) ? 'on' : 'off');
+export function setVoiceGuide(mode) {
+  setSetting('voiceGuide', mode); setSetting('speak', mode !== 'off');
+  if (mode === 'off') { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } }
+  emit('voice-guide', mode);
+}
+export function speak(text, kind = 'nav', { force } = {}) {
+  const mode = voiceGuide();
+  if (!force && (mode === 'off' || (mode === 'alerts' && kind !== 'alert'))) return;
   const A = native();
   if (A) { try { A.speak(text); } catch { /* ignore */ } return; } // Android WebView has no speechSynthesis
   if (!window.speechSynthesis) return;
@@ -357,7 +383,7 @@ function updateNav(pos) {
   const toDest = haversine([pos.lat, pos.lng], [r.dest.lat, r.dest.lng]);
   if (toDest < 35 && !r.arrived) {
     r.arrived = true;
-    speak('You have arrived.');
+    speak('You have arrived.', 'alert');
     emit('arrived', r.dest);
     return emit('nav', navState());
   }
@@ -365,7 +391,7 @@ function updateNav(pos) {
   r.off = off > 70 ? r.off + 1 : 0;
   if (r.off >= 2 && Date.now() - r.lastReroute > 20000) {
     r.lastReroute = Date.now();
-    speak('Rerouting');
+    speak('Rerouting', 'alert');
     fetchRoute(r.dest).then((route) => {
       if (ctx.ride !== r) return;
       r.route = route; r.k = Math.min(1, route.steps.length - 1); r.spoken = {}; r.off = 0;
@@ -416,16 +442,24 @@ export async function talkStart() {
   if (!ctx.group) throw new Error('Join a group to talk to your riders.');
   if (rt.status !== 'online') throw new Error('You’re offline. Talk works again when you reconnect.');
   player.unlock();
-  await ptt.start({ noiseSuppression: ctx.noiseCancel });
+  let lost = false;
+  await ptt.start({ noiseSuppression: ctx.noiseCancel, onChunk: (c) => { if (!rt.send({ t: 'vchunk', ...c })) lost = true; } });
+  ptt.lost = () => lost;
   emit('talking', true);
 }
 export async function talkStop() {
   emit('talking', false);
   if (!ptt.active) return 'idle';
-  const clip = await ptt.stop();
-  if (!clip) return 'short';
-  if (!rt.send({ t: 'voice', ...clip })) return 'offline';
+  const r = await ptt.stop();
+  if (!r) return 'idle';
+  if (r.short) { rt.send({ t: 'vcancel', sid: r.sid }); return 'short'; }
+  if (!rt.send({ t: 'vchunk', sid: r.sid, seq: -1, end: true, duration: r.duration }) || ptt.lost?.()) return 'offline';
   return 'sent';
+}
+/** Keep the mic ready during a group ride with voice on, so a press starts instantly. */
+export function voiceReady(on) {
+  if (on && ctx.voiceOn && ctx.group && !ctx.ride?.solo) ptt.warm({ noiseCancel: ctx.noiseCancel }).catch(() => {});
+  else ptt.cool();
 }
 
 // ---------------------------------------------------------------- SOS

@@ -257,3 +257,63 @@ test('drop a pin: reverse geocode with a fallback name', async () => {
   assert.match(r.name, /Sinhagad Ghat Road/);
   assert.equal((await api('GET', '/api/reverse?lat=x', undefined, a.token)).status, 400);
 });
+
+test('app API: /api/v1 paths, OpenAPI spec and docs', async () => {
+  const a = (await api('POST', '/api/v1/users', { name: 'Kotlin' })).body;
+  assert.ok(a.token);
+  assert.equal((await api('GET', '/api/v1/me', undefined, a.token)).body.user.name, 'Kotlin');
+  assert.equal((await api('GET', '/api/v1/me')).status, 401);
+  const spec = (await api('GET', '/api/v1/openapi.json')).body;
+  assert.equal(spec.openapi, '3.0.3');
+  const ops = Object.values(spec.paths).reduce((n, p) => n + Object.keys(p).length, 0);
+  assert.ok(ops >= 55, `documented operations: ${ops}`);
+  assert.ok(spec.paths['/api/v1/vehicles/{vid}/active'].post);
+  assert.match(spec.info.description, /vchunk/);
+  const docs = await fetch(`${base}/api/docs`);
+  assert.match(await docs.text(), /redoc/);
+});
+
+test('support: reports without email, before and after sign-in; admin can read them', async () => {
+  assert.equal((await api('POST', '/api/support', { message: 'hi' })).status, 400);
+  assert.equal((await api('POST', '/api/support', { message: 'Lost my phone, need my account' })).status, 400, 'signed out needs a contact');
+  const r1 = (await api('POST', '/api/support', { topic: 'account', message: 'Lost my phone, need my account', contact: '+919800000000' })).body;
+  assert.match(r1.ref, /^R-[A-Z0-9]{5}$/);
+  const u = await (await fetch(`${base}/api/users`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"Help"}' })).json();
+  const r2 = (await api('POST', '/api/support', { topic: 'voice', message: 'Can’t hear my group', info: 'web' }, u.token)).body;
+  assert.ok(r2.ref);
+  assert.equal((await api('GET', '/api/config')).body.supportEmail, null);
+  assert.equal((await api('GET', '/api/admin/reports')).status, 403);
+  const reps = srv.store.data.reports;
+  assert.equal(reps.find((x) => x.ref === r2.ref).name, 'Help');
+});
+
+test('rides keep the bike, pillion, quick and refills', async () => {
+  const a = (await api('POST', '/api/users', { name: 'Refill', vehicle: { make: 'Bajaj', model: 'Pulsar 150' } })).body;
+  const r = (await api('POST', '/api/rides', { points: [[18.52, 73.85, 1], [18.53, 73.86, 2]], duration: 600, quick: true, pillion: true, refills: [{ litres: 5, cost: 525 }, { litres: 'x' }] }, a.token)).body.ride;
+  assert.equal(r.vehicleId, a.user.vehicle.id);
+  assert.equal(r.vehicle, 'Pulsar 150');
+  assert.equal(r.quick, true);
+  assert.equal(r.pillion, true);
+  assert.deepEqual(r.refills.map((f) => f.litres), [5, 0]);
+});
+
+test('voice streams slice by slice to the group; short presses are cancelled', async () => {
+  const a = await signup('Talker'), b = await signup('Listener');
+  const g = (await api('POST', '/api/groups', { name: 'Voice' }, a.token)).body.group;
+  await api('POST', '/api/groups/join', { code: g.code }, b.token);
+  const wa = socket(a.token), wb = socket(b.token);
+  await Promise.all([wa.opened, wb.opened]);
+  wa.send(JSON.stringify({ t: 'sub', groupId: g.id })); wb.send(JSON.stringify({ t: 'sub', groupId: g.id }));
+  await wa.next((m) => m.t === 'snapshot'); await wb.next((m) => m.t === 'snapshot');
+  for (let i = 0; i < 3; i++) wa.send(JSON.stringify({ t: 'vchunk', sid: 'abc12345', seq: i, mime: 'audio/webm;codecs=opus', data: Buffer.from(`slice${i}`).toString('base64') }));
+  const first = await wb.next((m) => m.t === 'vchunk' && m.seq === 0);
+  assert.equal(first.from.name, 'Talker');
+  assert.equal(Buffer.from(first.data, 'base64').toString(), 'slice0');
+  await wb.next((m) => m.t === 'vchunk' && m.seq === 2);
+  wa.send(JSON.stringify({ t: 'vchunk', sid: 'abc12345', seq: -1, end: true, duration: 2.4 }));
+  assert.equal((await wb.next((m) => m.t === 'vchunk' && m.end)).duration, 2.4);
+  assert.equal((await wb.next((m) => m.t === 'chat' && m.message.type === 'voice')).message.text, 'Voice message · 2 s');
+  wa.send(JSON.stringify({ t: 'vcancel', sid: 'short001' }));
+  assert.equal((await wb.next((m) => m.t === 'vcancel')).sid, 'short001');
+  wa.close(); wb.close();
+});

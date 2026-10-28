@@ -362,6 +362,34 @@ module.exports = function features(app, x) {
     res.status(201).json({ group: groupView(g) });
   });
 
+  // ================================================================ 58d Contact support (works before sign-in too)
+  // Reports are kept on the server. Read them with GET /api/admin/reports and header `x-admin-key: <ADMIN_KEY>`.
+  const supportTries = new Map();
+  app.post('/api/support', (req, res) => {
+    const ip = req.ip || 'x', now = Date.now();
+    const t = supportTries.get(ip) || { n: 0, at: now };
+    if (now - t.at > 3600e3) { t.n = 0; t.at = now; }
+    if (++t.n > 10) return fail(res, 429, 'Too many reports. Try again in an hour.');
+    supportTries.set(ip, t);
+    const tok = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+    const user = tok ? x.userByToken(tok) : null;
+    const message = clean(req.body?.message, 2000);
+    if (message.length < 5) return fail(res, 400, 'Tell us a little about what happened.');
+    const contact = clean(req.body?.contact, 120);
+    if (!user && contact.length < 5) return fail(res, 400, 'We need a way to reach you.');
+    db.reports ||= [];
+    const ref = `R-${code().slice(0, 5)}`;
+    db.reports.push({ ref, ts: now, topic: clean(req.body?.topic, 20) || 'other', message, contact: contact || null, info: clean(req.body?.info, 800), userId: user?.id || null, name: user?.name || null, status: 'open' });
+    if (db.reports.length > 2000) db.reports.shift();
+    store.save();
+    res.status(201).json({ ref, email: cfg.supportEmail || null });
+  });
+  app.get('/api/admin/reports', (req, res) => {
+    if (!cfg.adminKey || req.get('x-admin-key') !== cfg.adminKey) return fail(res, 403, 'Admin key required.');
+    res.json({ reports: [...(db.reports || [])].reverse() });
+  });
+  app.get('/api/config', (req, res) => res.json({ supportEmail: cfg.supportEmail || null, version: x.VERSION }));
+
   // ================================================================ 22e Drop a pin
   app.get('/api/reverse', auth, async (req, res) => {
     const lat = num(req.query.lat), lng = num(req.query.lng);

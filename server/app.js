@@ -27,6 +27,8 @@ function createApp(opts = {}) {
     userAgent: opts.userAgent ?? process.env.USER_AGENT ?? 'Rylaide/0.1 (https://github.com/Drakeion2532/rylaide_ui)',
     upstreamTimeout: opts.upstreamTimeout ?? 8000,
     databaseUrl: opts.databaseUrl ?? process.env.DATABASE_URL ?? '',
+    supportEmail: opts.supportEmail ?? process.env.SUPPORT_EMAIL ?? '', // set once the Rylaide support address exists
+    adminKey: opts.adminKey ?? process.env.ADMIN_KEY ?? '',
   };
   // Owner bike photos live next to the data file (on the persistent disk in production).
   cfg.photoDir = opts.photoDir ?? process.env.PHOTO_DIR ?? path.join(cfg.dataFile ? path.dirname(cfg.dataFile) : fs.mkdtempSync(path.join(os.tmpdir(), 'rylaide-photos-')), 'photos');
@@ -50,6 +52,10 @@ function createApp(opts = {}) {
   // Hosts like Render/Railway terminate HTTPS at a proxy; trust it so QR invite links use https://.
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '3mb' }));
+  // Versioned API for the Android app (Figma: Implementation notes). /api/v1/... is the stable name for /api/...
+  app.use((req, res, next) => { if (req.url.startsWith('/api/v1/')) req.url = `/api/${req.url.slice(8)}`; next(); });
+  app.get('/api/openapi.json', (req, res) => res.json(require('./openapi')({ base: `${req.protocol}://${req.get('host')}` })));
+  app.get('/api/docs', (req, res) => res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rylaide API</title></head><body style="margin:0"><redoc spec-url="/api/v1/openapi.json"></redoc><script src="https://cdn.jsdelivr.net/npm/redoc@2.1.5/bundles/redoc.standalone.js"></script></body></html>`));
 
   // ---------- helpers ----------
   const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
@@ -306,7 +312,8 @@ function createApp(opts = {}) {
       groupName: clean(b.groupName, 40) || null, groupId: isMember(groupOf(b.groupId), req.user.id) ? b.groupId : null,
       vehicleId: vehiclesOf(req.user).some((v) => v.id === b.vehicleId) ? b.vehicleId : activeVehicle(req.user)?.id || null,
       vehicle: (vehiclesOf(req.user).find((v) => v.id === b.vehicleId) || activeVehicle(req.user))?.model || null,
-      solo: !b.groupId, pillion: !!b.pillion,
+      solo: !b.groupId, pillion: !!b.pillion, quick: !!b.quick,
+      refills: (Array.isArray(b.refills) ? b.refills : []).slice(0, 20).map((f) => ({ litres: Math.max(0, num(f.litres) || 0), cost: Math.max(0, num(f.cost) || 0), at: num(f.at) || null })),
       startedAt: num(b.startedAt) || Date.now(), duration: Math.max(0, num(b.duration) || 0),
       distance: Math.round(distance), maxSpeed: Math.max(0, num(b.maxSpeed) || 0), points,
     };
@@ -356,11 +363,13 @@ function createApp(opts = {}) {
   app.get('/api/fuel', auth, (req, res) => res.json(fuelView(req.user, vehicleParam(req.user, req.query.vehicle))));
   app.post('/api/fuel', auth, (req, res) => {
     const b = req.body || {};
-    const odometer = num(b.odometer), litres = num(b.litres), pricePerLitre = num(b.pricePerLitre);
+    let odometer = num(b.odometer); const litres = num(b.litres), pricePerLitre = num(b.pricePerLitre);
     if (!(odometer >= 0) || !(litres > 0) || !(pricePerLitre >= 0)) {
       return fail(res, 400, 'Enter the odometer reading, litres and price per litre.');
     }
     const vid = vehicleParam(req.user, b.vehicleId);
+    // Refills logged mid-ride send an estimated odometer; nudge it rather than reject a clash.
+    if (b.estimated) while (fuelOf(req.user, vid).some((f) => f.odometer === odometer)) odometer = Math.round((odometer + 0.1) * 10) / 10;
     if (fuelOf(req.user, vid).some((f) => f.odometer === odometer)) return fail(res, 409, 'There is already a fill-up at that odometer reading.');
     const f = { id: id(), userId: req.user.id, vehicleId: vid, odometer, litres, pricePerLitre, full: b.full !== false, date: clean(b.date, 10) || new Date().toISOString().slice(0, 10) };
     db.fuel.push(f);
@@ -474,10 +483,11 @@ function createApp(opts = {}) {
     db, store, cfg, auth, memberGroup, groupView, publicUser, vehiclesOf, activeVehicle, cleanVehicle, VEHICLE_ERROR,
     setVehiclePhoto, clearVehiclePhoto, photos, clean, num, fail, id, code, newSigninCode, LIMITS,
     upstream, broadcast: (...a) => broadcast(...a), systemMessage: (...a) => systemMessage(...a), toUser: (...a) => toUser(...a),
-    dropFromGroup: (...a) => dropFromGroup(...a), deleteGroup: (...a) => deleteGroup(...a), userByToken, haversine,
+    dropFromGroup: (...a) => dropFromGroup(...a), deleteGroup: (...a) => deleteGroup(...a), userByToken, haversine, VERSION: require('../package.json').version,
   });
 
   // ---------- static frontend ----------
+  app.use('/vendor/nsup', express.static(path.join(ROOT, 'node_modules/@sapphi-red/web-noise-suppressor/dist'), { maxAge: '30d' })); // RNNoise
   app.use('/vendor/maplibre', express.static(path.join(ROOT, 'node_modules/maplibre-gl/dist'), { maxAge: '7d' }));
   app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource-variable/google-sans-flex/files'), { maxAge: '30d' }));
   app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource/roboto/files'), { maxAge: '30d' }));
@@ -542,7 +552,7 @@ function createApp(opts = {}) {
       // Simple rate limit: 40 messages per 5 s per socket (location ~1/s + chat + voice).
       const now = Date.now();
       if (now - ws.bucket.at > 5000) ws.bucket = { n: 0, at: now };
-      if (++ws.bucket.n > 40) return send({ t: 'error', error: 'Slow down: too many messages.' });
+      if (++ws.bucket.n > 90) return send({ t: 'error', error: 'Slow down: too many messages.' }); // voice streams 5 slices/s
       let m;
       try { m = JSON.parse(raw); } catch { return send({ t: 'error', error: 'Bad message.' }); }
 
@@ -595,6 +605,34 @@ function createApp(opts = {}) {
           const msg = { id: id(), groupId: g.id, userId: user.id, name: user.name, color: user.color, type: 'voice', text: `Voice message · ${dur.toFixed(0)} s`, ts: now };
           pushMessage(msg);
           broadcast(g.id, { t: 'chat', message: msg });
+          break;
+        }
+        case 'vchunk': {
+          // Streamed push-to-talk: relayed as it arrives, never stored. The end marker adds a chat line.
+          const sid = clean(m.sid, 16);
+          if (!sid) return;
+          if (m.end) {
+            const v = ws.vstream?.sid === sid ? ws.vstream : null;
+            broadcast(g.id, { t: 'vchunk', from: publicUser(user), sid, seq: -1, end: true, duration: Math.max(0, Math.min(60, num(m.duration) || 0)) }, ws);
+            if (v) {
+              const dur = Math.max(0, Math.min(60, num(m.duration) || (now - v.at) / 1000));
+              const msg = { id: id(), groupId: g.id, userId: user.id, name: user.name, color: user.color, type: 'voice', text: `Voice message · ${dur.toFixed(0)} s`, ts: now };
+              pushMessage(msg);
+              broadcast(g.id, { t: 'chat', message: msg });
+            }
+            ws.vstream = null;
+            return;
+          }
+          if (typeof m.data !== 'string' || !m.data.length || m.data.length > 120_000) return;
+          if (!ws.vstream || ws.vstream.sid !== sid) ws.vstream = { sid, bytes: 0, at: now };
+          ws.vstream.bytes += m.data.length;
+          if (ws.vstream.bytes > LIMITS.voiceBytes) return send({ t: 'error', error: 'Voice message is too long (60 s max).' });
+          broadcast(g.id, { t: 'vchunk', from: publicUser(user), sid, seq: Math.max(0, Math.floor(num(m.seq) || 0)), mime: clean(m.mime, 60) || 'audio/webm', data: m.data }, ws);
+          break;
+        }
+        case 'vcancel': {
+          if (ws.vstream?.sid === m.sid) ws.vstream = null;
+          broadcast(g.id, { t: 'vcancel', sid: clean(m.sid, 16) }, ws);
           break;
         }
         case 'sos': {

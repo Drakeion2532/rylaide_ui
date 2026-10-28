@@ -1,4 +1,4 @@
-// 36 History → 34 Ride summary
+// 36 History (filter by bike) → 34 Ride summary · 34q quick-ride summary (refills)
 import { h, fmtKm, durShort, fmtDay, haversine, store, shareText } from '../util.js';
 import { api } from '../api.js';
 import { ctx } from '../state.js';
@@ -13,8 +13,17 @@ register('history', (el) => {
   const body = h('div', { class: 'screen-body pad' }, h('div', { class: 'empty' }, h('span', { class: 'spinner' })));
   el.append(bar, body);
   liftOnScroll(bar, body);
-  api.get('/api/rides').then(({ rides }) => {
-    if (!rides.length) {
+  let filter = store.get('historyBike', 'all');
+  const load = () => Promise.all([api.get('/api/rides'), api.get('/api/vehicles').catch(() => ({ vehicles: [] }))]).then(([{ rides: allRides }, { vehicles }]) => {
+    const vname = (id) => { const v = vehicles.find((x) => x.id === id); return v ? (v.nickname || v.model || v.make) : null; };
+    if (filter !== 'all' && !vehicles.some((v) => v.id === filter)) filter = 'all';
+    const rides = filter === 'all' ? allRides : allRides.filter((r) => r.vehicleId === filter);
+    const chips = vehicles.length > 1 ? h('div', { class: 'row gap8 bike-filter', style: 'flex-wrap:wrap;padding:8px 0 0', role: 'radiogroup', 'aria-label': 'Filter by bike' },
+      [{ id: 'all', name: 'All bikes' }, ...vehicles.map((v) => ({ id: v.id, name: v.nickname || v.model || v.make }))].map((c) => h('button', {
+        type: 'button', class: `chip${filter === c.id ? ' on' : ''}`, role: 'radio', 'aria-checked': String(filter === c.id), 'data-bike': c.id,
+        onclick: () => { store.set('historyBike', c.id); tab('history', { force: true }); },
+      }, filter === c.id ? ic('check', { size: 18 }) : null, c.name))) : null;
+    if (!allRides.length) {
       body.replaceChildren(h('div', { class: 'empty' }, ic('route'), h('p', { class: 'title-m', style: 'color:var(--on-surface)' }, 'No rides yet'),
         h('p', { class: 'body-m' }, 'Every ride you record shows here with its route, speed and time.'), button('Start a ride', { icon: 'play_arrow', onclick: () => push('setup') })));
       return;
@@ -23,18 +32,21 @@ register('history', (el) => {
     const thisMonth = rides.filter((r) => new Date(r.startedAt).getMonth() === month);
     const km = thisMonth.reduce((s, r) => s + r.distance, 0);
     const time = thisMonth.reduce((s, r) => s + r.duration, 0);
-    body.replaceChildren(
+    body.replaceChildren(chips,
       h('div', { style: 'padding:8px 0 20px' },
         h('div', { class: 'stat' }, h('div', { class: 'v' }, h('span', { class: 'ride-hero' }, fmtKm(km)), h('span', { class: 'title-l variant' }, 'km')), h('span', { class: 'label-m variant' }, 'This month')),
+        filter !== 'all' && !rides.length ? h('p', { class: 'body-m variant' }, 'No rides on this bike yet.') : null,
         h('div', { class: 'stat-row mt16' },
           h('div', { class: 'stat tile' }, h('span', { class: 'ride-metric' }, String(thisMonth.length)), h('span', { class: 'l' }, thisMonth.length === 1 ? 'Ride' : 'Rides')),
           h('div', { class: 'stat tile' }, h('span', { class: 'ride-metric' }, durShort(time)), h('span', { class: 'l' }, 'Riding time')),
           h('div', { class: 'stat tile' }, h('span', { class: 'ride-metric' }, String(rides.filter((r) => r.groupName).length)), h('span', { class: 'l' }, 'Group rides')))),
       h('div', { class: 'list' }, rides.map((r) => listItem({
-        icon: r.groupName ? 'groups' : 'person', title: r.destination || r.name, sub: `${fmtKm(r.distance)} km · ${durShort(r.duration)}`,
+        icon: r.quick ? 'bolt' : r.groupName ? 'groups' : 'person', title: r.destination || r.name, sub: [`${fmtKm(r.distance)} km · ${durShort(r.duration)}`, vname(r.vehicleId) || r.vehicle].filter(Boolean).join(' · '),
         trail: h('span', { class: 'row gap8' }, dayShort(r.startedAt), ic('chevron_right')), onclick: () => push('summary', { id: r.id }),
       }))), h('div', { style: 'height:24px' }));
   }).catch((e) => body.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', { class: 'body-m' }, e.message), button('Try again', { style: 'outlined', onclick: () => tab('history', { force: true }) }))));
+  load();
+  el.onResume = () => { filter = store.get('historyBike', 'all'); load(); }; // tab memory: refresh when shown again
 });
 
 /** Speed over the ride (km/h), smoothed, from GPS points [lat,lng,ts]. */
@@ -87,7 +99,8 @@ register('summary', (el, params) => {
   const render = (r) => {
     const rawAvg = r.avgSpeed ? r.avgSpeed * 3.6 : r.duration ? (r.distance / r.duration) * 3.6 : 0;
     const avg = rawAvg > 250 ? 0 : rawAvg;
-    const meta = [fmtDay(new Date(r.startedAt || Date.now())), r.vehicle || ctx.user?.vehicle?.model, r.groupName ? 'Group ride' : 'Solo ride'].filter(Boolean).join(' · ');
+    const meta = [fmtDay(new Date(r.startedAt || Date.now())), r.vehicle || ctx.user?.vehicle?.model, r.quick ? 'Quick ride' : r.groupName ? 'Group ride' : r.pillion ? 'With pillion' : 'Solo ride'].filter(Boolean).join(' · ');
+    const refills = (r.refills || []).filter((f) => f.litres > 0);
     const parked = store.get('parking', null);
     const parkingCard = h('button', { type: 'button', class: 'shortcut', style: 'margin:0', onclick: () => {
       if (!ctx.pos) return snackbar('Waiting for GPS to save your parking spot.');
@@ -114,6 +127,8 @@ register('summary', (el, params) => {
           h('div', { class: 'stat tile' }, h('span', { class: 'ride-metric' }, durShort(r.duration).replace(/^(\d+h \d+)m$/, '$1')), h('span', { class: 'l' }, 'Duration')),
           h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round(avg))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Average')),
           h('div', { class: 'stat tile' }, h('div', { class: 'v' }, h('span', { class: 'ride-metric' }, String(Math.round((r.maxSpeed || 0) * 3.6))), h('span', { class: 'u' }, 'km/h')), h('span', { class: 'l' }, 'Top'))),
+        refills.length ? h('div', { class: 'list', 'data-refills': '' }, listItem({ icon: 'local_gas_station', title: `${refills.length} ${refills.length === 1 ? 'refill' : 'refills'} on this ride`,
+          sub: `${refills.reduce((t, f) => t + f.litres, 0).toFixed(1)} L · ₹${Math.round(refills.reduce((t, f) => t + f.cost, 0)).toLocaleString('en-IN')} · in the fuel log` })) : null,
         speedChart(r.points, r),
         h('div', { class: 'stack gap8', style: 'padding:8px 0 calc(24px + var(--safe-b))' },
           button('Done', { size: 'large', wide: true, onclick: close }),

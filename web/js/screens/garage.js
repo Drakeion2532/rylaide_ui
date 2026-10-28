@@ -86,6 +86,14 @@ register('fuel', (el, params) => {
     } }, h('h2', { class: 'headline-s' }, 'Add fill-up'), odo, h('div', { class: 'row gap12' }, h('div', { class: 'grow' }, litres), h('div', { class: 'grow' }, price)), date,
       listItem({ title: 'Filled to full tank', sub: 'Needed to work out mileage', trail: switchEl({ checked: true, label: 'Filled to full tank', onchange: (v) => (full = v) }), cls: 'switch-row' }), go);
   });
+  // Bike switcher: each vehicle keeps its own fuel log (Figma: multi-vehicle)
+  const switcher = h('div', { class: 'row gap8 bike-filter', style: 'flex-wrap:wrap;padding:0 16px 8px' });
+  el.insertBefore(switcher, body);
+  api.get('/api/vehicles').then(({ vehicles }) => {
+    if (vehicles.length < 2) return;
+    switcher.replaceChildren(...vehicles.map((v) => h('button', { type: 'button', class: `chip${v.id === vid ? ' on' : ''}`, 'data-bike': v.id, 'aria-pressed': String(v.id === vid),
+      onclick: () => v.id !== vid && push('fuel', { vehicleId: v.id, title: v.nickname || v.model }, { replace: true }) }, v.id === vid ? ic('check', { size: 18 }) : null, v.nickname || v.model || v.make)));
+  }).catch(() => {});
   api.get(`/api/fuel?vehicle=${vid}`).then(draw).catch((e) => body.replaceChildren(h('div', { class: 'empty' }, ic('cloud_off'), h('p', {}, e.message))));
 });
 

@@ -1,5 +1,5 @@
 // Offline shell: the app opens without signal; live features reconnect when it returns.
-const VERSION = 'rylaide-v5';
+const VERSION = 'rylaide-v6';
 const SHELL = [
   '/', '/styles.css', '/manifest.webmanifest',
   '/js/app.js', '/js/api.js', '/js/map.js', '/js/voice.js', '/js/util.js', '/js/ui.js', '/js/icons.js', '/js/theme.js',
@@ -8,6 +8,7 @@ const SHELL = [
   '/js/screens/garage.js', '/js/screens/setup.js', '/js/screens/ride.js',
   '/js/screens/vehicles.js', '/js/screens/groupinfo.js', '/js/screens/settings.js', '/js/screens/extra.js',
   '/vendor/maplibre/maplibre-gl.js', '/vendor/maplibre/maplibre-gl.css',
+  '/vendor/nsup/index.js', '/vendor/nsup/rnnoise/workletProcessor.js', '/vendor/nsup/rnnoise.wasm', '/vendor/nsup/rnnoise_simd.wasm',
   '/icons/icon-192.png', '/icons/favicon.svg',
   '/fonts/symbols.woff2', '/fonts/google-sans-flex-latin-wght-normal.woff2', '/fonts/roboto-latin-400-normal.woff2', '/fonts/roboto-latin-500-normal.woff2',
   '/img/bike-classic.jpg', '/img/bike-adventure.jpg', '/img/bike-roadster.jpg', '/img/bike-cruiser.jpg', '/img/bike-sport.jpg', '/img/group-ride.jpg', '/img/ghat-road.jpg',

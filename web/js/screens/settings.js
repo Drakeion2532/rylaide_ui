@@ -10,7 +10,7 @@ import { register, push, back, upTo } from '../router.js';
 import { supportEmail } from '../legal.js';
 import * as engine from '../engine.js';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const go = (name, params) => () => push(name, params);
 const row = (icon, title, sub, name, params) => listItem({ icon, title, sub, trail: ic('chevron_right'), onclick: go(name, params), attrs: { 'data-page': name } });
 const toggle = (icon, title, sub, key, def, after) => listItem({ icon, title, sub, trail: switchEl({ checked: setting(key, def), label: title, onchange: (v) => { setSetting(key, v); after?.(v); } }) });
@@ -80,7 +80,7 @@ register('account', (el) => {
     h('div', { class: 'list' },
       listItem({ icon: 'logout', title: 'Sign out of this phone', sub: 'Sign back in any time with your account code', onclick: async () => {
         if (!(await dialog({ title: 'Sign out?', body: code ? `Write down your account code first: ${code}` : 'You’ll need your account code to sign back in.', confirm: 'Sign out' }))) return;
-        rt.close(); api.setToken(null); ['user', 'groupId'].forEach(store.del); location.reload();
+        rt.close(); api.setToken(null); ['user', 'groupId', 'groupsCache'].forEach(store.del); location.reload();
       } }),
       listItem({ icon: 'delete_forever', title: 'Delete account', sub: 'Removes your rides, vehicles and logs', cls: 'danger-row', onclick: deleteAccount })),
     h('div', { style: 'height:32px' }));
@@ -189,9 +189,13 @@ register('audio', (el) => {
     h('div', { class: 'list mt8' }, row('mic', 'Mic test', 'Check your helmet headset', 'mictest')),
     sectionTitle('Voice chat'),
     h('div', { class: 'list' },
-      listItem({ icon: 'campaign', title: 'Hear my group', sub: 'Play riders’ voice messages as they arrive', trail: switchEl({ checked: ctx.voiceOn, label: 'Hear my group', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); } }) }),
-      listItem({ icon: 'noise_control_off', title: 'Noise cancel', sub: 'Reduce wind noise when you talk', trail: switchEl({ checked: ctx.noiseCancel, label: 'Noise cancel', onchange: (v) => { ctx.noiseCancel = v; store.set('noiseCancel', v); engine.ptt.chain.setNoiseCancel(v); } }) })),
-    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Pair your helmet headset with Bluetooth before you start. Rylaide uses whatever microphone and speaker your phone is using.'));
+      listItem({ icon: 'campaign', title: 'Voice chat', sub: 'On group rides your mic is open: just talk. Nothing is sent while you’re quiet.', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => engine.setVoiceOn(v) }) }),
+      listItem({ icon: 'mic_off', title: 'Start rides muted', sub: 'Tap the mic in the ride to talk. Same as tapping Mute during a ride.', trail: switchEl({ checked: ctx.micMuted, label: 'Start rides muted', onchange: (v) => engine.setMicMuted(v) }) }),
+      listItem({ icon: 'noise_control_off', title: 'Noise cancel', sub: 'Removes wind and engine noise from your voice', trail: switchEl({ checked: ctx.noiseCancel, label: 'Noise cancel', onchange: (v) => engine.setNoiseCancel(v) }) })),
+    h('div', { style: 'padding:16px 4px 4px' }, h('div', { class: 'title-s', style: 'padding-bottom:4px' }, 'Voice sensitivity'),
+      h('p', { class: 'body-s variant', style: 'margin:0 0 8px' }, 'How loud you need to speak before your group hears you. Pick Low if wind keeps opening your mic.'),
+      segmented([{ value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }], setting('voiceSensitivity', 'normal'), (v) => engine.setVoiceSensitivity(v), { label: 'Voice sensitivity' })),
+    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Pair your helmet headset with Bluetooth before you start. Rylaide uses whatever microphone and speaker your phone is using. In the Android app, voice keeps working with nearby riders when there’s no signal.'));
 });
 
 // ---------------------------------------------------------------- 54 Offline & storage
@@ -246,7 +250,8 @@ const TOPICS = [
   { id: 'voice', icon: 'hearing_disabled', title: 'I can’t hear my group, or they can’t hear me', steps: [
     ['Run the mic test', 'Check the bar moves when you speak, and play back your recording.', { label: 'Open mic test', run: () => push('mictest') }],
     ['Voice chat on', 'In the ride hub, Group tab → Voice chat must be on to hear others.'],
-    ['Hold to talk', 'Hold the mic button the whole time you talk, then let go. Very short taps aren’t sent.'],
+    ['Not muted', 'The mic button in the ride should say “Mic on”. If it says “Muted”, tap it once. Then just talk.'],
+    ['Wind opening the mic', 'If your group hears wind, set Voice sensitivity to Low in Audio & headset.', { label: 'Audio & headset', run: () => push('audio') }],
     ['Headset connected', 'Pair your helmet headset with Bluetooth before opening Rylaide.'],
   ] },
   { id: 'map', icon: 'map', title: 'The map or directions won’t load', steps: [

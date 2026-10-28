@@ -77,13 +77,18 @@ Connect to \`wss://<host>/ws?token=<token>\`. All messages are JSON with a \`t\`
 **Send:** \`{t:'sub', groupId}\` to open a group · \`{t:'loc', lat, lng, speed, heading}\` about once a second while riding ·
 \`{t:'chat', text}\` · \`{t:'typing'}\` · \`{t:'sos', lat, lng}\` / \`{t:'sos_cancel'}\` · \`{t:'ping', ts}\`.
 
-**Push-to-talk (streamed):** while the button is held, send \`{t:'vchunk', sid, seq, mime:'audio/webm;codecs=opus', data:<base64>}\`
-every 200 ms (Opus, 48 kbps, mono, noise-suppressed), then \`{t:'vchunk', sid, seq:-1, end:true, duration}\` on release.
-A press shorter than 0.4 s sends \`{t:'vcancel', sid}\`. Listeners receive the same messages with \`from\` and should play
-slices in \`seq\` order as they arrive (Android: MediaCodec / ExoPlayer with a WebM/Opus extractor).
+**Live voice (hands-free, open mic):** binary WebSocket messages, one RVP packet each: a 16-byte header
+(version 1 · kind 1 voice / 2 end of sentence · sender fnv32(userId) · group fnv32(groupId) · seq · ttl · flags · spurt) and one
+20 ms Opus frame (48 kHz mono, 24 kbps). Send only while the rider is speaking (voice detector); the server stamps the sender,
+drops duplicates and relays to the group. The same packet travels phone to phone over Bluetooth when there's no signal.
+Full spec: docs/offline-voice.md in the repo (Android: \`voice/VoiceEngine.kt\`, \`voice/BleMesh.kt\`).
+
+**Voice clips (fallback for browsers without WebCodecs):** \`{t:'vchunk', sid, seq, mime:'audio/webm;codecs=opus', data:<base64>}\`
+every 200 ms while the rider speaks, then \`{t:'vchunk', sid, seq:-1, end:true, live:true, duration}\`. \`{t:'vcancel', sid}\` drops one.
+Listeners receive the same messages with \`from\` and play slices in \`seq\` order.
 
 **Receive:** \`snapshot\` (after sub) · \`presence\` · \`loc\` · \`chat\` · \`typing\` · \`vchunk\` / \`vcancel\` · \`sos\` / \`sos_cancel\` ·
-\`members\` (group changed) · \`ride_live\` (you were picked for a ride) · \`group_added\` (Nearby) · \`group_gone\` (removed or deleted) ·
+binary RVP voice packets · \`members\` (group changed) · \`ride_live\` (you were picked for a ride) · \`group_added\` (Nearby) · \`group_gone\` (removed or deleted) ·
 \`expenses\` / \`shared\` (refresh those tabs) · \`error\`.`;
 
 module.exports = ({ base = '' } = {}) => {

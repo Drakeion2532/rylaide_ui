@@ -13,8 +13,8 @@ android {
         applicationId = "com.rylaide.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 5
+        versionName = "0.5.0"
         buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
     }
 
@@ -37,4 +37,4 @@ android {
         jvmTarget = "17"
     }
 }
-// No extra libraries: the app uses only the Android framework (WebView, TextToSpeech, Vibrator).
+// No extra libraries: the app uses only the Android framework (WebView, TextToSpeech, Vibrator, MediaCodec Opus, Bluetooth LE).

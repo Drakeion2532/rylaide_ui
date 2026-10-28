@@ -24,7 +24,7 @@ export const TERMS = [
 export const PRIVACY = [
   ['What we keep', 'Your name, avatar colour, vehicles and their photos, rides (route, time, speed), fuel and service logs, emergency contacts, group membership, chat messages and shared expenses.'],
   ['Location', 'Your live location is sent only while the app is open, and only to the group you are riding with. Solo rides are never shared. Nearby shows your rough distance only to riders who also have Nearby open.'],
-  ['Voice', 'Push-to-talk clips go to your group as they’re spoken and are not stored on our server. Only a “voice message” line is kept in chat.'],
+  ['Voice', 'On group rides your voice goes live to your group while you speak, and is never recorded or stored. Nothing is sent while you’re quiet or muted. In the Android app, nearby riders’ phones may pass your voice on to other riders in your group when there’s no signal.'],
   ['Who we share with', 'Map and weather services receive the places you search and route to, without your name. We don’t sell data or use advertising.'],
   ['Keeping and deleting', 'Data stays until you delete it. Settings → Account → Delete account removes your rides, vehicles, logs and contacts and takes you out of your groups.'],
   ['Contact', 'Questions or requests: Settings → Customer care in the app.'],

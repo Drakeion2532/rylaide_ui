@@ -16,6 +16,12 @@ const LIMITS = {
   messagesKept: 500, // per group
   ridePoints: 20000,
 };
+/** FNV-1a 32-bit of a UTF-8 string: rider and group ids inside live voice packets (docs/offline-voice.md). */
+function fnv32(s) {
+  let h = 0x811c9dc5;
+  for (const b of Buffer.from(String(s), 'utf8')) { h ^= b; h = Math.imul(h, 0x01000193) >>> 0; }
+  return h >>> 0;
+}
 const COLORS = ['#F98924', '#2FC9C3', '#E5484D', '#8B7CF6', '#F5C542', '#4CC38A', '#EC6AA8', '#5AA9FF'];
 
 function createApp(opts = {}) {
@@ -488,6 +494,7 @@ function createApp(opts = {}) {
 
   // ---------- static frontend ----------
   app.use('/vendor/nsup', express.static(path.join(ROOT, 'node_modules/@sapphi-red/web-noise-suppressor/dist'), { maxAge: '30d' })); // RNNoise
+  app.use('/vendor/opusdec', express.static(path.join(ROOT, 'node_modules/opus-decoder/dist'), { maxAge: '30d' })); // Opus playback where WebCodecs is missing
   app.use('/vendor/maplibre', express.static(path.join(ROOT, 'node_modules/maplibre-gl/dist'), { maxAge: '7d' }));
   app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource-variable/google-sans-flex/files'), { maxAge: '30d' }));
   app.use('/fonts', express.static(path.join(ROOT, 'node_modules/@fontsource/roboto/files'), { maxAge: '30d' }));
@@ -538,6 +545,38 @@ function createApp(opts = {}) {
     if (!online(gid, ws.user.id)) broadcast(gid, { t: 'presence', userId: ws.user.id, online: false });
   }
 
+  // ---------- live voice: RVP packets (16-byte header + one 20 ms Opus frame), relayed as-is to the group ----------
+  const voiceSeen = new Map(); // groupId -> Map<"sender:seq:kind", time>: a rider heard twice (direct + via a gateway) plays once
+  function liveVoice(ws, raw) {
+    const g = groupOf(ws.groupId);
+    if (!g || !isMember(g, ws.user.id)) return;
+    const b = Buffer.isBuffer(raw) ? raw : Buffer.concat([].concat(raw));
+    if (b.length < 16 || b.length > 1200 || b[0] !== 1 || (b[1] !== 1 && b[1] !== 2)) return;
+    if (b.readUInt32BE(6) !== fnv32(g.id)) return; // packet for another group
+    const now = Date.now();
+    const v = ws.voice;
+    if (now - v.at > 1000) { v.n = 0; v.bytes = 0; v.at = now; }
+    v.n++; v.bytes += b.length;
+    if (v.n > 250 || v.bytes > 40000) return; // ~5 riders relayed through one gateway phone; beyond that, drop
+    const own = fnv32(ws.user.id);
+    let sender = b.readUInt32BE(2);
+    const gateway = (b[13] & 1) === 1;
+    // A gateway rider forwards nearby riders' voice from the offline mesh: keep their id only if they're in this group.
+    if (!(gateway && sender !== own && g.members.some((m) => fnv32(m) === sender))) { sender = own; b.writeUInt32BE(own, 2); }
+    if (sender === own) b[13] &= ~1;
+    const key = `${sender}:${b.readUInt16BE(10)}:${b[1]}`;
+    let seen = voiceSeen.get(g.id);
+    if (!seen) voiceSeen.set(g.id, (seen = new Map()));
+    if (seen.has(key) && now - seen.get(key) < 10000) return;
+    seen.set(key, now);
+    if (seen.size > 4000) for (const [k, t] of seen) { if (now - t > 10000 || seen.size > 3000) seen.delete(k); else break; }
+    for (const peer of rooms.get(g.id) || []) {
+      if (peer === ws || peer.readyState !== 1 || fnv32(peer.user.id) === sender) continue;
+      if (peer.bufferedAmount > 64 * 1024) continue; // a slow phone skips frames rather than falling behind
+      peer.send(b, { binary: true });
+    }
+  }
+
   wss.on('connection', (ws, req) => {
     const t = new URL(req.url, 'http://x').searchParams.get('token');
     const user = t && userByToken(t);
@@ -548,8 +587,10 @@ function createApp(opts = {}) {
     ws.on('pong', () => (ws.alive = true));
     const send = (m) => ws.readyState === 1 && ws.send(JSON.stringify(m));
 
-    ws.on('message', (raw) => {
-      // Simple rate limit: 40 messages per 5 s per socket (location ~1/s + chat + voice).
+    ws.voice = { n: 0, bytes: 0, at: Date.now() };
+    ws.on('message', (raw, isBinary) => {
+      if (isBinary) return liveVoice(ws, raw);
+      // Simple rate limit for JSON messages (location ~1/s + chat + fallback voice clips). Live voice is binary.
       const now = Date.now();
       if (now - ws.bucket.at > 5000) ws.bucket = { n: 0, at: now };
       if (++ws.bucket.n > 90) return send({ t: 'error', error: 'Slow down: too many messages.' }); // voice streams 5 slices/s
@@ -608,13 +649,14 @@ function createApp(opts = {}) {
           break;
         }
         case 'vchunk': {
-          // Streamed push-to-talk: relayed as it arrives, never stored. The end marker adds a chat line.
+          // Streamed voice clips (browsers that can't encode live Opus): relayed as they arrive, never stored.
+          // A clip from a voice-message sender adds a chat line; live voice (live:true) doesn't.
           const sid = clean(m.sid, 16);
           if (!sid) return;
           if (m.end) {
             const v = ws.vstream?.sid === sid ? ws.vstream : null;
             broadcast(g.id, { t: 'vchunk', from: publicUser(user), sid, seq: -1, end: true, duration: Math.max(0, Math.min(60, num(m.duration) || 0)) }, ws);
-            if (v) {
+            if (v && !m.live) {
               const dur = Math.max(0, Math.min(60, num(m.duration) || (now - v.at) / 1000));
               const msg = { id: id(), groupId: g.id, userId: user.id, name: user.name, color: user.color, type: 'voice', text: `Voice message · ${dur.toFixed(0)} s`, ts: now };
               pushMessage(msg);

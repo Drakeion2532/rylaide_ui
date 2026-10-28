@@ -62,7 +62,9 @@ export class Realtime {
       this.setStatus('online');
       if (this.groupId) this.send({ t: 'sub', groupId: this.groupId });
     };
+    ws.binaryType = 'arraybuffer';
     ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') { this.emit('voice-packet', new Uint8Array(e.data)); return; } // live voice (RVP)
       let m; try { m = JSON.parse(e.data); } catch { return; }
       this.emit(m.t, m);
     };
@@ -82,6 +84,11 @@ export class Realtime {
   }
   send(m) {
     if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(m)); return true; }
+    return false;
+  }
+  /** Live voice packet. Dropped (false) rather than queued when the link is slow: late voice is useless. */
+  sendBinary(bytes) {
+    if (this.ws?.readyState === 1 && this.ws.bufferedAmount < 32 * 1024) { this.ws.send(bytes); return true; }
     return false;
   }
   close() { this.closedByUs = true; clearTimeout(this.timer); this.ws?.close(); this.ws = null; this.setStatus('offline'); }

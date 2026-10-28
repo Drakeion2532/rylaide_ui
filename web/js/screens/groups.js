@@ -116,7 +116,7 @@ register('group', (el, params) => {
         if (g.live?.riders.includes(m.id)) sub += ' · riding';
         if (ctx.sos.has(m.id)) sub = 'SOS active';
         return listItem({
-          lead: avatar(m.name, { status: ctx.sos.has(m.id) ? 'off' : ctx.speaking === m.id ? 'speaking' : (m.online || me) ? 'connected' : 'off', color: m.color }),
+          lead: avatar(m.name, { status: ctx.sos.has(m.id) ? 'off' : engine.isSpeaking(m.id) ? 'speaking' : (m.online || me) ? 'connected' : 'off', color: m.color }),
           title: `${m.name}${m.id === g.ownerId ? ' · Leader' : ''}`, sub,
           trail: loc && !me ? button('Find', { style: 'text', onclick: () => push('ridemap', { focus: loc }) }) : null,
           cls: ctx.sos.has(m.id) ? 'alert' : '',

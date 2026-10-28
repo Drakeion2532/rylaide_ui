@@ -490,6 +490,7 @@ h1, h2, h3, p { margin: 0; }
 .ctl.mic { background: var(--primary); color: var(--on-primary); }
 .ctl.mic-idle { background: var(--surface-container-highest); color: var(--on-surface); border: 2px solid var(--on-surface); }
 .ctl.mic-off { background: var(--surface-container-highest); color: var(--on-surface); border: 2px solid var(--on-surface); }
+.ctl.mic-muted { background: var(--error-container); color: var(--on-error-container); border: 2px solid var(--error); }
 .ctl.sos { background: #ba1a1a; color: #fff; }
 .ctl.sos .ms, .ctl.sos-active .ms { font: 700 15px/1 'Google Sans Flex'; letter-spacing: .5px; width: auto; }
 .ctl.sos-active { background: var(--error-container); color: var(--on-error-container); }

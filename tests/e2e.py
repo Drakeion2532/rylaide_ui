@@ -337,7 +337,7 @@ async def main():
             await expect(A.locator('.gauge .readout')).to_contain_text('km/h')
             await tap(A, '[role=tab][data-value=group]')
             await expect(A.locator('.rider-row', has_text='Bilal')).to_contain_text(re.compile('away|with you'))
-            await expect(A.locator('.rider-row', has_text='You')).to_contain_text('Listening')
+            await expect(A.locator('.rider-row', has_text='You')).to_contain_text(re.compile('Mic on|Talking'))
             await shot(A, '08-hub-group')
             # 28 full-screen group
             await tap(A, '.hub-content .btn.tonal')
@@ -367,22 +367,35 @@ async def main():
             await expect(A.locator('[data-screen=ride]')).to_be_visible()
         await step('Ride hub: timer, rider on map, speed gauge, group view, 28/29/25 full screens, minimise + resume', hub_views())
 
-        async def push_to_talk():
+        async def live_voice():
             await A.wait_for_timeout(450)  # let the hub finish sliding in (300 ms)
-            await hold(A, '.mic-ctl', 150)
-            await expect(A.locator('.snackbar').last).to_contain_text('Hold the mic')
-            # streamed: B hears A while A is still holding the button (not after release)
-            await B.evaluate("window.__vc = []; window.__rylaide.rt.on('vchunk', (m) => window.__vc.push([m.seq, Date.now()]))")
-            holding = asyncio.create_task(hold(A, '.mic-ctl', 2200))
-            await A.wait_for_timeout(1300)
-            got = await B.evaluate("window.__vc.filter(c => c[0] >= 0).length")
-            assert got >= 3, f'expected live voice slices while talking, got {got}'
-            await holding
+            # Group ride: the mic is open on its own — no button to hold. (Chromium's fake mic beeps once a second.)
+            await expect(A.locator('.mic-ctl[data-mic=live]')).to_be_visible(timeout=8000)
+            await expect(A.locator('.mic-ctl')).to_contain_text(re.compile('Mic on|Talking'))
             assert await A.evaluate("window.__rylaide.engine.ptt.chain.rnnoise"), 'RNNoise noise cancel should be loaded'
-            await B.wait_for_function("() => window.__vc.some(c => c[0] === -1)", timeout=5000)  # end marker after release
-            await B.wait_for_function("() => window.__rylaide.ctx.messages.some(m => m.type === 'voice')", timeout=8000)
-            await B.wait_for_function("() => window.__rylaide.ctx.speaking || document.querySelector('.snackbar')", timeout=6000)
-        await step('Push-to-talk: short press refused; voice streams live while talking, RNNoise on, played', push_to_talk())
+            await A.wait_for_function("() => { const s = window.__rylaide.engine.voiceStats().mic; return s && s.opus && s.sent > 10 && s.spurts >= 1 }", timeout=8000)
+            # B hears A live: Opus packets arrive, decode and play; A shows as speaking.
+            await B.wait_for_function("() => { const p = window.__rylaide.engine.voiceStats().player; return p.packets > 10 && p.played > 5 }", timeout=8000)
+            a_id = await A.evaluate("window.__rylaide.ctx.user.id")
+            await B.wait_for_function(f"() => window.__rylaide.ctx.speakers.has('{a_id}')", timeout=6000, polling=40)
+            await shot(A, '10-mic-on')
+            # One tap mutes: the mic closes and nothing more is sent.
+            await tap(A, '.mic-ctl')
+            await expect(A.locator('.mic-ctl[data-mic=muted]')).to_contain_text('Muted')
+            await expect(A.locator('.snackbar').last).to_contain_text('Mic muted')
+            assert await A.evaluate("JSON.parse(localStorage.getItem('rylaide.micMuted'))") is True, 'mute is remembered'
+            await A.wait_for_timeout(400)
+            n0 = await B.evaluate("window.__rylaide.engine.voiceStats().player.packets")
+            await A.wait_for_timeout(1800)
+            n1 = await B.evaluate("window.__rylaide.engine.voiceStats().player.packets")
+            assert n1 - n0 <= 2, f'muted mic still sending ({n1 - n0} packets)'
+            assert await A.evaluate("window.__rylaide.engine.ptt.chain.stream === null"), 'mic released when muted'
+            await shot(A, '10b-muted')
+            # Tap again: live again.
+            await tap(A, '.mic-ctl')
+            await expect(A.locator('.mic-ctl[data-mic=live]')).to_be_visible(timeout=6000)
+            await B.wait_for_function(f"() => window.__rylaide.engine.voiceStats().player.packets > {n1 + 5}", timeout=8000)
+        await step('Live voice: mic open on group rides, B hears A (Opus, RNNoise), tap to mute / unmute, remembered', live_voice())
 
         async def sos():
             await tap(B, '.hero .btn')

@@ -6,14 +6,26 @@
     <!-- Live location for the group map, navigation and ride recording -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Push-to-talk and the mic test -->
+    <!-- Group voice (open mic, tap to mute) and the mic test; routes audio to the helmet headset -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Offline voice between nearby riders' phones over Bluetooth Low Energy (Android 12+: "Nearby devices") -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- Keeps voice running with the screen off during a ride -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- SOS and ride alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <!-- Lets the app open the dialer, SMS and the share sheet (Android 11+ package visibility) -->
     <queries>
@@ -65,5 +77,11 @@
                 <data android:scheme="rylaide" />
             </intent-filter>
         </activity>
+
+        <!-- Group voice during a ride: mic, headset audio and the offline Bluetooth link -->
+        <service
+            android:name=".voice.RideVoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|connectedDevice" />
     </application>
 </manifest>

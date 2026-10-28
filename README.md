@@ -15,7 +15,7 @@ SOS countdown and ride summary.
 - Choose **Solo ride** (with or without a pillion), **Group ride** (pick your group, see who’s ready, check your mic) or **Quick ride** (skip setup) before every ride. Solo rides keep your location private
 - Create a group, or join one with a 6-letter code, invite link or QR
 - See every rider live on the map, with heading, distance away and online status
-- Push-to-talk: hold the big button and talk; the group hears it automatically
+- **Hands-free group voice:** on a group ride the mic is open and you just talk; nothing is sent while you're quiet. One tap mutes or unmutes (remembered for next time). In the Android app it keeps working **offline between nearby riders** over Bluetooth, phone to phone, and with the screen off
 - Group chat, with join, leave and plan notices
 - Search a destination, see the route, and get turn-by-turn directions spoken in your headset (reroutes if you go off course)
 - Share a ride plan (destination, meet time, note) with the group
@@ -31,7 +31,8 @@ SOS countdown and ride summary.
 - **Ride:** pick who's riding today (they get a "… started a ride · Join" invite), choose a destination by dropping a pin, a Pillion tab with break reminders, crash detection (30 s countdown, then SOS), and an Arrived screen
 - **Account:** Terms & privacy before you start, sign in on another phone with your account code, delete account
 - **Settings:** Account, Appearance, Riding & directions, Safety & SOS, Location & privacy, Audio & headset, Offline & storage, About, and Customer care with the Rylaide Assistant (guided fixes, then a report straight to Rylaide support)
-- **Voice:** push-to-talk streams while you speak (about half a second mouth-to-ear), Opus at 48 kbps, with noise cancellation: wind filter + RNNoise (AI noise removal) + gate and compressor. The mic stays ready during a group ride so the first word isn't cut
+- **Voice:** open mic with a voice detector (sends only while you speak, learns wind and engine noise; sensitivity Low/Normal/High), 20 ms Opus frames at 24 kbps, 60 ms jitter buffer, riders mixed so two can talk at once (about 0.2 s mouth-to-ear online). Noise cancellation: wind filter + RNNoise (AI noise removal) + compressor in the browser; the phone's echo cancel and noise suppression in the Android app
+- **Offline voice (Android app, iPhone app to follow):** nearby riders' phones link over Bluetooth LE and relay each other's voice (3 hops); a rider with signal carries offline riders' voice to the rest of the group and back. Same packet on every link and platform: see [docs/offline-voice.md](docs/offline-voice.md)
 - **Voice guidance button on the map** (like Google Maps): Sound on · Alerts only · Muted
 
 **Screen flow** follows the Figma *Navigation map · for development*:
@@ -101,12 +102,13 @@ api.call({ it.signIn("K7QM-4XPA"); it.vehicles() }) { result ->
 }
 ```
 
-- **Realtime** (location, chat, SOS, streamed push-to-talk) is a WebSocket at `/ws?token=…`; the message format is in the docs, including the `vchunk` voice stream your native audio code can send and play.
+- **Realtime** (location, chat, SOS, live voice) is a WebSocket at `/ws?token=…`; the message format is in the docs. Live voice is binary RVP packets, the same ones the Android app sends phone to phone offline: [docs/offline-voice.md](docs/offline-voice.md).
+- **Group voice in the Android app** runs natively (`voice/`: `VoiceEngine.kt` mic + Opus + mixing, `BleMesh.kt` offline Bluetooth link, `VoiceHub.kt` routing, `RideVoiceService.kt` screen-off running). The web app starts it through `window.RylaideAndroid.voiceStart(…)`. Needs Android 10+; older phones use the web voice.
 
 ## Tests
 
 ```bash
-npm test                 # 25 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
+npm test                 # 27 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
 npm run test:e2e         # 20 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
@@ -195,7 +197,8 @@ Running it on your own computer needs none of this: without `DATABASE_URL` it sa
 - [ ] **Install it:** Android → menu → *Install app*; iPhone → Share → *Add to Home Screen*. Check the Rylaide icon appears
 - [ ] Allow **location** and **microphone** when asked
 - [ ] Two phones, outdoors: create a group, join by link, and see each other move on the map
-- [ ] Push-to-talk both ways with helmet headsets; run the Mic test first
+- [ ] Group voice both ways with helmet headsets (just talk; tap the mic to mute); run the Mic test first
+- [ ] Android app, airplane mode with Bluetooth on: two riders next to each other still hear each other (chip shows Nearby)
 - [ ] Hold SOS on one phone; the other gets the alert. Then cancel
 - [ ] Navigate a short known route and check the spoken directions
 - [ ] Record a short ride and check it appears in Tools → Rides
@@ -205,8 +208,9 @@ Running it on your own computer needs none of this: without `DATABASE_URL` it sa
 
 These are fine for a launch with your riding group, but worth knowing:
 
-- **Voice is push-to-talk over the internet,** not live, always-on intercom, and it needs mobile data. Offline Bluetooth intercom is in the native Android app.
-- **iPhone:** voice messages play while Rylaide is open on screen. iOS pauses web apps in the background, and location sharing pauses too.
+- **Offline voice reaches riders near you** (Bluetooth, roughly 30–100 m per phone, relayed along a line of riders). A rider far behind with no signal is out of reach until they're back in range or online. Offline voice needs the Android app (Android 10+); browsers need internet.
+- **Phone-to-phone voice isn't encrypted yet** (it's only accepted from the same group). A per-group key is the next step; see docs/offline-voice.md.
+- **iPhone (web app):** group voice works while Rylaide is open on screen. iOS pauses web apps in the background, and location sharing pauses too.
 - **Accounts have no password.** Each phone gets its own sign-in; signing out or clearing browser data starts a new account.
 - **Free map services:** the public OSRM routing server and Nominatim search are meant for light use (about one request per second). That's fine for a riding group. For a public launch, self-host them or use a paid provider via `OSRM_URL` / `NOMINATIM_URL`.
 - **One server:** all data is kept as one JSON document (a file, or one database row on free hosting). That's good for hundreds of riders, not thousands. Move to proper tables (or Firebase, as planned for the native app) before scaling.
@@ -232,6 +236,7 @@ Colours: asphalt `#232B36`, hazard orange `#F98924`, signal teal `#2FC9C3`.
 server/   Express + WebSocket backend (app.js), JSON store
 web/      The app: index.html, styles.css (Figma tokens + components), service worker
 web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), ui (components), theme, map, voice
+          livevoice.js (open mic, voice detector, Opus, RVP packets, mixing) · rv-capture.js (20 ms mic frames)
 web/js/screens/  onboarding (+ terms, sign in), home, groups, groupinfo (info, members, expenses, settings), history (+ summary),
           vehicles (garage, vehicle, service), garage (fuel, contacts, mic test), settings (hub + pages, customer care),
           setup, ride, extra (crash, arrived, nearby, drop a pin)
@@ -239,7 +244,10 @@ server/features.js  vehicles, service, group tools, expenses, shared places, sig
 server/openapi.js   API description (served at /api/v1/openapi.json and /api/docs)
 android/app/src/main/java/com/rylaide/app/api/RylaideApi.kt  Kotlin API client
 web/js/vehicles.js  vehicle catalogue, type detection, Home picture · bikeform.js  the bike form
-android/  Android Studio project: MainActivity (WebView), RylaideBridge (speech, vibration, share, keep awake)
+android/  Android Studio project: MainActivity (WebView), RylaideBridge (speech, vibration, share, keep awake, voice)
+          voice/: VoiceEngine (mic, Opus, mixing, headset), BleMesh (offline Bluetooth link), VoiceHub (routing),
+          RideVoiceService (keeps voice on with the screen off), Rvp + Opus (packet, codec, voice detector)
+docs/offline-voice.md  Voice spec for every platform: packet, audio, Bluetooth link, relaying, iPhone notes
 tests/    api.test.js (node:test), e2e.py (Playwright, two riders)
 assets/   Logo and icon sets
 ```

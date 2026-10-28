@@ -105,7 +105,7 @@ on('group-gone', (m) => { const top = router.current(); if (top && ['group', 'gr
 window.addEventListener('rylaide:signedout', () => {
   if (!api.token) return;
   api.setToken(null);
-  store.del('user');
+  store.del('user'); store.del('groupsCache');
   snackbar('Your session ended. Set up Rylaide again to keep riding.');
   setTimeout(() => location.reload(), 1500);
 });

@@ -3,11 +3,14 @@ import { store, haversine, distToLine, fmtDist, vibrate, native } from './util.j
 import { api } from './api.js';
 import { ctx, rt, emit, setting, setSetting } from './state.js';
 import { PushToTalk, VoicePlayer } from './voice.js';
+import { LiveMic, LivePlayer, RVP, fnv32 } from './livevoice.js';
 import { setThemePosition } from './theme.js';
 
 // ---------------------------------------------------------------- groups
 export async function loadGroups() {
-  ctx.groups = (await api.get('/api/groups')).groups;
+  // Kept on the phone too, so a group ride (and offline voice with nearby riders) can start with no signal.
+  try { ctx.groups = (await api.get('/api/groups')).groups; store.set('groupsCache', ctx.groups); }
+  catch (e) { const cached = store.get('groupsCache', null); if (!cached || e.status === 401) throw e; ctx.groups = cached; }
   const want = store.get('groupId');
   openGroup(ctx.groups.find((g) => g.id === want) || ctx.groups[0] || null);
   emit('groups', ctx.groups);
@@ -21,6 +24,8 @@ export function openGroup(g) {
     ctx.locs.clear(); ctx.sos.clear(); ctx.messages = []; ctx.unread = 0;
     rt.subscribe(g?.id || null);
     if (g) loadMessages(g.id);
+    live.reset();
+    if (ctx.ride) syncVoice();
   }
   emit('group', g);
 }
@@ -66,6 +71,7 @@ export function wireRealtime() {
     if (s === 'online') { if (ctx.connLost) emit('banner', { tone: 'ok', icon: 'check_circle', title: 'Everyone’s back', sub: `${onlineRiders().length} riders connected`, ms: 3000 }); ctx.connEver = true; ctx.connLost = false; }
     if (s === 'offline' && ctx.connEver && !ctx.connLost) { ctx.connLost = true; emit('banner', { tone: 'bad', icon: 'link_off', title: 'Connection lost', sub: 'Trying to reconnect… Navigation still works', sticky: true }); }
     emit('conn', ctx.conn);
+    nativeVoice()?.voiceConfig(JSON.stringify({ online: s === 'online' }));
   });
   rt.on('snapshot', (m) => {
     if (m.group.id !== ctx.group?.id) return;
@@ -101,6 +107,7 @@ export function wireRealtime() {
   rt.on('voice', (m) => { if (ctx.voiceOn) player.enqueue(m); }); // older apps: whole clip after release
   rt.on('vchunk', (m) => { if (ctx.voiceOn) player.chunk(m); });  // streamed while the rider talks
   rt.on('vcancel', (m) => player.cancel(m.sid));
+  rt.on('voice-packet', onVoicePacket);                             // live voice
   rt.on('sos', (m) => onSos(m.alert));
   rt.on('sos_cancel', (m) => { ctx.sos.delete(m.userId); emit('sos-cancel', m.userId); });
   rt.on('error', (m) => emit('snack', m.error));
@@ -224,7 +231,7 @@ export function startRide({ dest = null, route = null, solo = !ctx.group, pillio
   store.set('activeRide', { startedAt: ctx.ride.startedAt });
   requestWakeLock();
   crash.start();
-  voiceReady(true);
+  syncVoice();
   // Group ride: tell the riders picked in 17 Select riders (they get "… started a ride · Join").
   if (!solo && ctx.group) {
     api.post(`/api/groups/${ctx.group.id}/ride`, { riders: riders || onlineRiders().map((m) => m.id), destination: dest ? short(dest.name) : null, lat: dest?.lat, lng: dest?.lng }).catch(() => {});
@@ -317,7 +324,7 @@ export async function endRide() {
   store.del('activeRide');
   releaseWakeLock();
   crash.stop();
-  voiceReady(false);
+  syncVoice();
   if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
   const duration = (Date.now() - r.startedAt) / 1000;
@@ -431,36 +438,170 @@ function releaseWakeLock() { try { native()?.keepAwake(false); } catch { /* igno
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.ride) requestWakeLock(); });
 
 // ---------------------------------------------------------------- voice
-export const ptt = new PushToTalk();
-export const player = new VoicePlayer({
-  onStart: (m) => { ctx.speaking = m.from.id; emit('speaking', m.from); },
-  onEnd: () => { ctx.speaking = null; emit('speaking', null); },
-  onBlocked: (resume) => emit('snack', { text: 'New voice message', action: { label: 'Play', run: () => { player.unlock(); resume(); } }, ms: 10000 }),
+// Live group voice: the mic is open for the whole group ride and you just talk. One tap mutes or unmutes,
+// and that choice is remembered. Nothing is held or pressed while riding.
+// In the Android app the phone's own voice engine runs it (works with the screen off and offline between
+// nearby riders); in a browser the web engine below does, over the internet.
+export const ptt = new PushToTalk();           // holds the processed mic chain; also sends clips where Opus can't be encoded
+export const player = new VoicePlayer({        // plays clips from those older senders
+  onStart: () => {}, onEnd: () => {},
+  onBlocked: (resume) => emit('snack', { text: 'Tap to hear your group', action: { label: 'Play', run: () => { player.unlock(); live.unlock(); resume(); } }, ms: 10000 }),
 });
+export const live = new LivePlayer({
+  onSpeakers: (set) => setSpeakers([...set]),
+  onBlocked: (resume) => emit('snack', { text: 'Tap to hear your group', action: { label: 'Play', run: () => { resume(); player.unlock(); } }, ms: 10000 }),
+});
+ctx.speakers = new Set();
+ctx.micMuted = store.get('micMuted', false);
+ctx.mesh = { peers: 0 };
+let mic = null, micStarting = null;
 
-export async function talkStart() {
-  if (!ctx.group) throw new Error('Join a group to talk to your riders.');
-  if (rt.status !== 'online') throw new Error('You’re offline. Talk works again when you reconnect.');
-  player.unlock();
-  let lost = false;
-  await ptt.start({ noiseSuppression: ctx.noiseCancel, onChunk: (c) => { if (!rt.send({ t: 'vchunk', ...c })) lost = true; } });
-  ptt.lost = () => lost;
-  emit('talking', true);
+const nativeVoice = () => { const n = native(); try { return n && typeof n.voiceStart === 'function' && n.voiceSupported() ? n : null; } catch { return null; } };
+const memberByHash = (hash) => ctx.group?.members.find((m) => fnv32(m.id) === hash) || null;
+function setSpeakers(hashes) {
+  ctx.speakers = new Set(hashes.map((x) => memberByHash(x)?.id).filter(Boolean));
+  ctx.speaking = [...ctx.speakers][0] || null;
+  emit('speaking', ctx.speaking ? ctx.group.members.find((m) => m.id === ctx.speaking) : null);
 }
-export async function talkStop() {
-  emit('talking', false);
-  if (!ptt.active) return 'idle';
-  const r = await ptt.stop();
-  if (!r) return 'idle';
-  if (r.short) { rt.send({ t: 'vcancel', sid: r.sid }); return 'short'; }
-  if (!rt.send({ t: 'vchunk', sid: r.sid, seq: -1, end: true, duration: r.duration }) || ptt.lost?.()) return 'offline';
-  return 'sent';
+export const isSpeaking = (uid) => (uid === ctx.user?.id ? !!ctx.talking : ctx.speakers.has(uid));
+
+/** 'off' (solo / no group / voice chat off) · 'muted' · 'starting' · 'live' · 'error' */
+export function micState() {
+  if (!ctx.ride || ctx.ride.solo || !ctx.group) return 'off';
+  if (!ctx.voiceOn) return 'off';
+  if (ctx.micMuted) return 'muted';
+  return ctx.micState || 'starting';
 }
-/** Keep the mic ready during a group ride with voice on, so a press starts instantly. */
-export function voiceReady(on) {
-  if (on && ctx.voiceOn && ctx.group && !ctx.ride?.solo) ptt.warm({ noiseCancel: ctx.noiseCancel }).catch(() => {});
-  else ptt.cool();
+function setMicState(s, error) { ctx.micState = s; ctx.micError = error || null; emit('mic', micState()); }
+
+const b64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); };
+const unb64 = (str) => { const bin = atob(str); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
+
+/** Start or stop voice to match the ride, the group, Voice chat and Mute. Safe to call any time. */
+export function syncVoice() {
+  const want = !!(ctx.ride && !ctx.ride.solo && ctx.group && ctx.voiceOn);
+  const nv = nativeVoice();
+  if (nv) {
+    if (want) {
+      nv.voiceStart(JSON.stringify({
+        userId: ctx.user.id, groupId: ctx.group.id, groupName: ctx.group.name, online: rt.status === 'online',
+        muted: ctx.micMuted, noiseCancel: ctx.noiseCancel, sensitivity: setting('voiceSensitivity', 'normal'),
+      }));
+      if (!ctx.micMuted && !ctx.micState) setMicState('starting');
+    } else { nv.voiceStop(); ctx.micState = null; emit('mic', micState()); }
+    return;
+  }
+  if (want && !ctx.micMuted) startMic();
+  else stopMic();
+  emit('mic', micState());
 }
+/** Older name kept for screens. */
+export const voiceReady = () => syncVoice();
+
+async function startMic() {
+  const gid = ctx.group.id;
+  if (mic && mic.groupId === gid) return;
+  if (mic) stopMic();
+  if (micStarting) return;
+  setMicState('starting');
+  micStarting = (async () => {
+    const m = new LiveMic({
+      chain: ptt.chain, sender: fnv32(ctx.user.id), group: fnv32(gid), sensitivity: setting('voiceSensitivity', 'normal'),
+      onPacket: (bytes) => rt.sendBinary(bytes),
+      onTalking: (on) => { ctx.talking = on; emit('talking', on); },
+      onSpurt: (edge) => clipFallback(m, edge),
+    });
+    m.groupId = gid;
+    ptt.keepWarm = true;
+    try {
+      await m.start({ noiseCancel: ctx.noiseCancel });
+      // Muted, ended or switched group while the mic was starting.
+      if (!ctx.ride || ctx.micMuted || !ctx.voiceOn || ctx.group?.id !== gid) { m.stop(); return; }
+      mic = m;
+      setMicState('live');
+    } catch (e) {
+      m.stop();
+      setMicState('error', e.message);
+      emit('snack', e.message);
+    }
+  })().finally(() => { micStarting = null; });
+}
+
+/** Where WebCodecs can't encode Opus (older Safari): each spoken sentence goes as a streamed clip. */
+async function clipFallback(m, edge) {
+  if (m.opus) return;
+  try {
+    if (edge === 'start') await ptt.start({ noiseSuppression: ctx.noiseCancel, onChunk: (c) => rt.send({ t: 'vchunk', ...c }) });
+    else if (ptt.active) {
+      const r = await ptt.stop();
+      if (r?.short) rt.send({ t: 'vcancel', sid: r.sid });
+      else if (r) rt.send({ t: 'vchunk', sid: r.sid, seq: -1, end: true, live: true, duration: r.duration });
+    }
+  } catch { /* mic busy */ }
+}
+
+function stopMic() {
+  mic?.stop();
+  mic = null;
+  if (ptt.active) ptt.cancel();
+  ptt.keepWarm = false;
+  ptt.chain.close();
+  if (ctx.talking) { ctx.talking = false; emit('talking', false); }
+  ctx.micState = null;
+}
+
+/** The one control riders need: tap to mute, tap again to talk. Remembered between rides. */
+export function setMicMuted(muted) {
+  ctx.micMuted = !!muted;
+  store.set('micMuted', ctx.micMuted);
+  const nv = nativeVoice();
+  if (nv) { nv.voiceMute(ctx.micMuted); if (ctx.micMuted) { ctx.talking = false; emit('talking', false); } emit('mic', micState()); }
+  else syncVoice();
+  live.unlock(); player.unlock();
+  vibrate(ctx.micMuted ? [40] : [20, 40, 20]);
+}
+export function setVoiceOn(on) {
+  ctx.voiceOn = !!on;
+  store.set('voiceOn', ctx.voiceOn);
+  if (!on) live.reset();
+  syncVoice();
+}
+export function setNoiseCancel(on) {
+  ctx.noiseCancel = !!on;
+  store.set('noiseCancel', ctx.noiseCancel);
+  ptt.chain.setNoiseCancel(ctx.noiseCancel);
+  nativeVoice()?.voiceConfig(JSON.stringify({ noiseCancel: ctx.noiseCancel }));
+}
+export function setVoiceSensitivity(level) {
+  setSetting('voiceSensitivity', level);
+  mic?.setSensitivity(level);
+  nativeVoice()?.voiceConfig(JSON.stringify({ sensitivity: level }));
+}
+/** Live voice stats for the voice check in Settings (and tests). */
+export const voiceStats = () => ({ mic: mic ? { ...mic.stats, opus: mic.opus, talking: !!ctx.talking } : null, player: { ...live.stats }, mesh: ctx.mesh });
+
+function onVoicePacket(bytes) {
+  if (!ctx.voiceOn) return;
+  const nv = nativeVoice();
+  if (nv) { nv.voiceIn(b64(bytes)); return; } // the app plays it and forwards it to nearby riders who are offline
+  live.packet(RVP.parse(bytes));
+}
+
+// The Android app's voice engine calls these.
+window.__rylaideVoice = {
+  /** A packet to send to the server (the rider's own voice, or a nearby offline rider's, as a gateway). */
+  out(str) { rt.sendBinary(unb64(str)); },
+  /** {talking, speakers:[hash], peers, mic:'live'|'muted'|'error', error} */
+  state(json) {
+    let s; try { s = JSON.parse(json); } catch { return; }
+    if (s.talking !== undefined && s.talking !== ctx.talking) { ctx.talking = !!s.talking; emit('talking', ctx.talking); }
+    if (s.speakers) setSpeakers(s.speakers);
+    if (s.peers !== undefined && s.peers !== ctx.mesh.peers) { ctx.mesh = { peers: s.peers }; emit('mesh', ctx.mesh); emit('conn', ctx.conn); }
+    if (typeof s.muted === 'boolean' && s.muted !== ctx.micMuted) { ctx.micMuted = s.muted; store.set('micMuted', s.muted); } // Mute from the notification
+    if (s.meshError !== undefined) ctx.meshError = s.meshError;
+    if (s.mic) setMicState(s.mic, s.error);
+  },
+};
 
 // ---------------------------------------------------------------- SOS
 export function sendSos() {

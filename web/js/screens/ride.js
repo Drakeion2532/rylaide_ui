@@ -33,58 +33,55 @@ function rideControls({ onRiders } = {}) {
   const g = ctx.ride?.solo ? null : ctx.group;
   const riders = g ? rideControl({ type: 'group', icon: 'groups', label: `${engine.onlineRiders().length} ${engine.onlineRiders().length === 1 ? 'rider' : 'riders'}`, onclick: onRiders })
     : rideControl({ type: 'group', icon: 'person', label: 'Solo ride', onclick: () => snackbar('Solo ride: your location stays private. Start a group ride to share it.') });
-  const mic = rideControl({ type: ctx.voiceOn && g ? 'mic-idle' : 'mic-off', icon: ctx.voiceOn && g ? 'mic' : 'mic_off', label: ctx.voiceOn && g ? 'Hold to talk' : 'Mic off', cls: 'mic-ctl' });
-  wirePtt(mic, () => g);
+  const mic = micToggle();
   const sos = rideControl({ type: 'sos', icon: 'SOS', label: 'SOS', hold: 1500, cls: 'sos-ctl', onHold: () => push('sos', {}, { anim: 'up' }), onclick: () => snackbar('Hold SOS for 1.5 seconds to alert your group.') });
   const el = h('div', { class: 'ride-controls' }, riders, mic, sos);
   const offs = onMany({
     group: () => { const n = engine.onlineRiders().length; if (ctx.group) riders.setState({ label: `${n} ${n === 1 ? 'rider' : 'riders'}` }); },
     speaking: (who) => mic.classList.toggle('hearing', !!who),
   });
-  el.cleanup = offs;
+  el.cleanup = () => { offs(); mic.cleanup(); };
   return el;
 }
 
-function wirePtt(ctl, groupFor = () => ctx.group) {
-  let pressing = false;
-  const reset = () => ctl.setState(ctx.voiceOn && groupFor() ? { type: 'mic-idle', label: 'Hold to talk', icon: 'mic' } : { type: 'mic-off', label: 'Mic off', icon: 'mic_off' });
-  const down = async (e) => {
-    e.preventDefault();
-    engine.player.unlock();
-    if (!groupFor()) return snackbar(ctx.ride?.solo ? 'Talk works on group rides.' : 'Join a group to talk to your riders.');
-    if (!ctx.voiceOn) return snackbar('Voice chat is off. Turn it on in the Group view.');
-    if (pressing) return;
-    pressing = true;
-    ctl.setPointerCapture?.(e.pointerId);
-    ctl.classList.add('live');
-    ctl.setState({ type: 'mic', label: 'You’re live', icon: 'mic' });
-    engine.ptt.onLimit = () => up();
-    try {
-      await engine.talkStart();
-      // Released while the mic was still starting: stop it now so it never keeps recording.
-      if (!pressing) { await engine.talkStop(); snackbar('Hold the mic while you talk.'); }
-    } catch (err) { pressing = false; ctl.classList.remove('live'); reset(); snackbar(err.message); }
+/**
+ * Mic: open the whole group ride, so riders never take a hand off the bar or reach for the helmet.
+ * One tap mutes, one tap unmutes, and the choice is kept for the next ride.
+ */
+function micToggle() {
+  const ctl = rideControl({ type: 'mic-off', icon: 'mic_off', label: 'Mic off', cls: 'mic-ctl' });
+  const look = () => {
+    const s = engine.micState();
+    const [type, icon, label] = {
+      off: ['mic-off', 'mic_off', ctx.ride?.solo || !ctx.group ? 'Mic off' : 'Voice off'],
+      muted: ['mic-muted', 'mic_off', 'Muted'],
+      starting: ['mic', 'mic', 'Mic on'],
+      live: ['mic', 'mic', ctx.talking ? 'Talking' : 'Mic on'],
+      error: ['mic-off', 'mic_off', 'No mic'],
+    }[s];
+    ctl.setState({ type, icon, label });
+    ctl.dataset.mic = s;
+    ctl.setAttribute('aria-pressed', String(s === 'muted'));
+    ctl.setAttribute('aria-label', s === 'muted' ? 'Unmute mic' : s === 'live' || s === 'starting' ? 'Mute mic' : label);
+    ctl.classList.toggle('live', s === 'live' && !!ctx.talking);
   };
-  const up = async () => {
-    if (!pressing) return;
-    pressing = false;
-    ctl.classList.remove('live');
-    reset();
-    if (!engine.ptt.active) return; // mic still starting — down() finishes the job
-    const r = await engine.talkStop();
-    if (r === 'short') snackbar('Hold the mic while you talk.');
-    if (r === 'offline') snackbar('Couldn’t send. You’re offline.');
-  };
-  ctl.addEventListener('pointerdown', down);
-  ctl.addEventListener('pointerup', up);
-  ctl.addEventListener('pointercancel', up);
-  ctl.addEventListener('lostpointercapture', up);
-  ctl.addEventListener('contextmenu', (e) => e.preventDefault());
-  ctl.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) down(e); });
-  ctl.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') up(); });
+  ctl.addEventListener('click', () => {
+    engine.live.unlock(); engine.player.unlock();
+    const s = engine.micState();
+    if (!ctx.ride || ctx.ride.solo || !ctx.group) return snackbar('Voice works on group rides.');
+    if (s === 'off') { engine.setVoiceOn(true); return snackbar('Voice chat on. Your group can hear you.'); }
+    if (s === 'error') { engine.syncVoice(); return; }
+    engine.setMicMuted(s !== 'muted');
+    snackbar(ctx.micMuted ? 'Mic muted. You can still hear your group.' : 'Mic on. Just talk, your group hears you.');
+  });
+  look();
+  ctl.cleanup = onMany({ mic: look, talking: look, ride: look, group: look });
+  return ctl;
 }
 
 function connChip() {
+  // Offline but nearby riders reached directly phone-to-phone (Android app): voice keeps working.
+  if (ctx.conn !== 'internet' && ctx.mesh?.peers > 0) return connectionStatus('nearby', true);
   const state = ctx.conn === 'internet' && ctx.group && engine.onlineRiders().length > 1 ? 'connected' : ctx.conn;
   return connectionStatus(state === 'internet' ? 'internet' : state, true);
 }
@@ -162,12 +159,12 @@ register('ride', (el) => {
   let map = null;
   const timer = h('span', { class: 'title-l tabular' });
   const chips = h('div', { class: 'hub-chips' });
-  const nc = () => h('button', { type: 'button', class: `status compact ${ctx.noiseCancel ? 'accent' : 'neutral'}`, style: 'border:0', 'aria-pressed': String(ctx.noiseCancel), onclick: () => { ctx.noiseCancel = !ctx.noiseCancel; store.set('noiseCancel', ctx.noiseCancel); engine.ptt.chain.setNoiseCancel(ctx.noiseCancel); renderChips(); snackbar(`Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`); } }, ic('noise_control_off'), `Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`);
+  const nc = () => h('button', { type: 'button', class: `status compact ${ctx.noiseCancel ? 'accent' : 'neutral'}`, style: 'border:0', 'aria-pressed': String(ctx.noiseCancel), onclick: () => { engine.setNoiseCancel(!ctx.noiseCancel); renderChips(); snackbar(`Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`); } }, ic('noise_control_off'), `Noise cancel ${ctx.noiseCancel ? 'on' : 'off'}`);
   const renderChips = () => chips.replaceChildren(connChip(), nc(), refillBtn(), ctx.gps === 'denied' ? h('span', { class: 'status compact warn' }, ic('location_off'), 'Location off') : ctx.gps === 'weak' ? h('span', { class: 'status compact warn' }, ic('gps_not_fixed'), 'Weak GPS') : null);
   const more = iconButton('more_vert', { label: 'Ride options', onclick: () => sheet((close) => h('div', { class: 'list' },
     h('div', { style: 'padding:4px 0 12px' }, h('div', { class: 'title-s', style: 'padding:0 4px 8px' }, 'Voice guidance'),
       segmented(VOICE_MODES.map((m) => ({ value: m.value, label: m.label })), engine.voiceGuide(), (v) => engine.setVoiceGuide(v), { label: 'Voice guidance' })),
-    listItem({ icon: 'campaign', title: 'Voice chat', sub: 'Hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); render(); } }) }),
+    listItem({ icon: 'campaign', title: 'Voice chat', sub: 'Talk and hear your group, hands-free', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { engine.setVoiceOn(v); render(); } }) }),
     listItem({ icon: 'forum', title: 'Group chat', onclick: () => { close(); if (ctx.group) push('group', { id: ctx.group.id }); } }),
     listItem({ icon: 'local_gas_station', title: 'Log a refill', sub: 'Goes into this bike’s fuel log', onclick: () => { close(); refillSheet(); } }),
     listItem({ icon: 'stop_circle', title: 'End ride', onclick: () => { close(); confirmEnd(); } }))) });
@@ -244,8 +241,8 @@ register('ride', (el) => {
     const riders = [...g.members].sort((a, b) => (a.id === ctx.user.id ? -1 : b.id === ctx.user.id ? 1 : (b.online - a.online)));
     const row = (m) => {
       const me = m.id === ctx.user.id, loc = ctx.locs.get(m.id);
-      const speaking = me ? engine.ptt.active : ctx.speaking === m.id;
-      let sub = me ? (engine.ptt.active ? 'Speaking' : ctx.voiceOn ? 'Listening' : 'Mic off') : !m.online ? 'Disconnected' : speaking ? 'Speaking' : ctx.voiceOn ? 'Listening' : 'Connected';
+      const speaking = engine.isSpeaking(m.id);
+      let sub = me ? (speaking ? 'Talking' : ctx.micMuted && ctx.voiceOn ? 'Muted' : ctx.voiceOn ? 'Mic on' : 'Voice off') : !m.online ? 'Disconnected' : speaking ? 'Speaking' : ctx.voiceOn ? 'Listening' : 'Connected';
       if (!me && loc && ctx.pos) { const d = haversine([ctx.pos.lat, ctx.pos.lng], [loc.lat, loc.lng]); sub += ` · ${fmtDist(d).replace('now', 'with you')}${d >= 50 ? ' away' : ''}`; }
       if (ctx.sos.has(m.id)) sub = 'SOS · needs help';
       return h('div', { class: `rider-row${ctx.sos.has(m.id) ? ' selected' : ''}` },
@@ -258,7 +255,7 @@ register('ride', (el) => {
         h('button', { type: 'button', class: 'btn tonal', style: 'height:40px', onclick: () => push('ridegroup') }, ic('open_in_full', { size: 18 }), 'Full screen')),
       h('div', { class: 'list' }, riders.map(row)),
       h('div', { class: 'row gap8 body-s variant', style: 'padding:16px 4px' }, ic('two_wheeler', { size: 16 }), `${g.name} · ${riders.length} ${riders.length === 1 ? 'rider' : 'riders'}`),
-      h('div', { class: 'list' }, listItem({ icon: 'campaign', title: 'Voice chat', sub: ctx.voiceOn ? 'On · your group can hear you' : 'Off · you won’t hear your group', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { ctx.voiceOn = v; store.set('voiceOn', v); engine.voiceReady(!!ctx.ride && v); render(); } }) }))));
+      h('div', { class: 'list' }, listItem({ icon: 'campaign', title: 'Voice chat', sub: !ctx.voiceOn ? 'Off · you won’t hear your group' : ctx.micMuted ? 'On · you’re muted, you still hear your group' : 'On · just talk, your group hears you', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => { engine.setVoiceOn(v); render(); } }) }))));
   };
 
   // 25u Pillion: who's on the back, break reminders, comfort
@@ -310,7 +307,8 @@ register('ride', (el) => {
     group: () => { renderChips(); if (view === 'group') groupView(); },
     speaking: () => { if (view === 'group') groupView(); },
     talking: () => { if (view === 'group') groupView(); },
-    conn: renderChips, gps: renderChips, weather: () => view === 'map' && updateMapView(),
+    mic: () => { if (view === 'group') groupView(); },
+    conn: renderChips, mesh: renderChips, gps: renderChips, weather: () => view === 'map' && updateMapView(),
     ride: (r) => { if (!r && current()?.name === 'ride') tab('home'); },
   });
   const staleT = setInterval(() => map?.markStale(STALE), 15000);
@@ -459,7 +457,7 @@ register('ridegroup', (el) => {
     const rows = [...g.members].sort((a, b) => (a.id === ctx.user.id ? -1 : b.id === ctx.user.id ? 1 : (b.online - a.online)));
     list.replaceChildren(...rows.map((m) => {
       const me = m.id === ctx.user.id, loc = ctx.locs.get(m.id);
-      const speaking = me ? engine.ptt.active : ctx.speaking === m.id;
+      const speaking = engine.isSpeaking(m.id);
       const spd = me ? (ctx.pos?.speed || 0) : (loc?.speed || 0);
       const dist = !me && loc && ctx.pos ? haversine([ctx.pos.lat, ctx.pos.lng], [loc.lat, loc.lng]) : null;
       return h('div', { class: `rider-row big${ctx.sos.has(m.id) ? ' selected' : ''}` },

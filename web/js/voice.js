@@ -1,4 +1,5 @@
-// Group voice: low-latency push-to-talk with noise cancellation.
+// Voice building blocks: the processed mic chain (VoiceChain), clip streaming for browsers without WebCodecs
+// (PushToTalk, VoicePlayer) and the Mic test. Live hands-free group voice is in livevoice.js.
 //
 // Send:  mic (kept warm during a group ride, so a press starts instantly and no words are clipped)
 //        → high-pass 150 Hz (wind rumble) → RNNoise (AI noise removal, when Noise cancel is on)

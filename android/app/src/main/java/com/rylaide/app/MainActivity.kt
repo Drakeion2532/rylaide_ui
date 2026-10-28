@@ -10,6 +10,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -30,6 +31,9 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.util.Base64
+import com.rylaide.app.voice.RideVoiceService
+import org.json.JSONObject
 
 /**
  * Rylaide for Android: a full-screen WebView around the Rylaide web app (served by `npm start`),
@@ -80,6 +84,7 @@ class MainActivity : Activity() {
             userAgentString = "$userAgentString RylaideAndroid/${BuildConfig.VERSION_NAME}"
         }
         bridge = RylaideBridge(this)
+        RideVoiceService.sink = voiceSink
         web.addJavascriptInterface(bridge, "RylaideAndroid")
         web.webViewClient = Client()
         web.webChromeClient = Chrome()
@@ -117,6 +122,8 @@ class MainActivity : Activity() {
     override fun onPause() { web.onPause(); super.onPause() }
 
     override fun onDestroy() {
+        if (isFinishing) stopVoice()
+        RideVoiceService.sink = null
         bridge.shutdown()
         web.destroy()
         super.onDestroy()
@@ -132,6 +139,52 @@ class MainActivity : Activity() {
     fun keepAwake(on: Boolean) = runOnUiThread {
         if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    // ---------------------------------------------------------------- group voice (native engine + offline mesh)
+
+    /** Packets for the server and voice state go to the web app, which owns the socket and the UI. */
+    private val voiceSink = object : RideVoiceService.Sink {
+        override fun toServer(packet: ByteArray) {
+            val b64 = Base64.encodeToString(packet, Base64.NO_WRAP)
+            web.post { web.evaluateJavascript("window.__rylaideVoice&&__rylaideVoice.out('$b64')", null) }
+        }
+        override fun state(json: JSONObject) {
+            val q = JSONObject.quote(json.toString())
+            web.post { web.evaluateJavascript("window.__rylaideVoice&&__rylaideVoice.state($q)", null) }
+        }
+    }
+    private var pendingVoice: String? = null
+
+    /** Start (or update) group voice. Asks for the mic and Nearby devices first, the first time. */
+    fun startVoice(config: String) = runOnUiThread {
+        val want = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        want += RideVoiceService.meshPermissions()
+        if (Build.VERSION.SDK_INT >= 33) want += Manifest.permission.POST_NOTIFICATIONS
+        val missing = want.filter { !has(it) }
+        if (missing.isNotEmpty() && pendingVoice == null && !prefs.getBoolean("voicePermsAsked", false)) {
+            pendingVoice = config
+            prefs.edit().putBoolean("voicePermsAsked", true).apply()
+            requestPermissions(missing.toTypedArray(), REQ_VOICE)
+            return@runOnUiThread
+        }
+        if (pendingVoice != null) { pendingVoice = config; return@runOnUiThread }
+        launchVoice(config)
+    }
+
+    private fun launchVoice(config: String) {
+        if (!has(Manifest.permission.RECORD_AUDIO)) {
+            voiceSink.state(JSONObject().put("mic", "error").put("error", "Allow the microphone for Rylaide to talk to your group."))
+        }
+        val i = Intent(this, com.rylaide.app.voice.RideVoiceService::class.java)
+            .setAction(RideVoiceService.ACTION_START).putExtra(RideVoiceService.EXTRA_CONFIG, config)
+        try { startForegroundService(i) } catch (e: Exception) { voiceSink.state(JSONObject().put("mic", "error").put("error", "Couldn’t start group voice.")) }
+    }
+
+    fun stopVoice() {
+        pendingVoice = null
+        if (RideVoiceService.hub == null) return
+        startService(Intent(this, RideVoiceService::class.java).setAction(RideVoiceService.ACTION_STOP))
     }
 
     // ---------------------------------------------------------------- server setup screen
@@ -282,6 +335,12 @@ class MainActivity : Activity() {
                 pendingGeo = null
                 if (!ok) explainDenied("Location")
             }
+            REQ_VOICE -> {
+                val cfg = pendingVoice
+                pendingVoice = null
+                if (cfg != null) launchVoice(cfg)
+                if (!has(Manifest.permission.RECORD_AUDIO)) explainDenied("Microphone")
+            }
             REQ_MIC -> {
                 pendingMedia?.let { if (ok) it.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else it.deny() }
                 pendingMedia = null
@@ -308,5 +367,6 @@ class MainActivity : Activity() {
         private const val REQ_LOCATION = 11
         private const val REQ_MIC = 12
         private const val REQ_FILE = 13
+        private const val REQ_VOICE = 14
     }
 }

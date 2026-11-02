@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- SOS and ride alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -77,6 +78,12 @@
                 <data android:scheme="rylaide" />
             </intent-filter>
         </activity>
+
+        <!-- Any ride: GPS with the screen off, and the ride on the watch's music screen -->
+        <service
+            android:name=".RideService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- Group voice during a ride: mic, headset audio and the offline Bluetooth link -->
         <service

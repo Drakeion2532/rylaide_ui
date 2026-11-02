@@ -1,5 +1,5 @@
 // Offline shell: the app opens without signal; live features reconnect when it returns.
-const VERSION = 'rylaide-v9';
+const VERSION = 'rylaide-v10';
 const SHELL = [
   '/', '/styles.css', '/manifest.webmanifest',
   '/js/app.js', '/js/api.js', '/js/map.js', '/js/voice.js', '/js/livevoice.js', '/js/rv-capture.js', '/js/heading.js', '/js/util.js', '/js/ui.js', '/js/icons.js', '/js/theme.js',

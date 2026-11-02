@@ -157,7 +157,8 @@ register('riding', (el) => {
 function watchSection() {
   const how = h('p', { class: 'body-s variant', style: 'padding:8px 4px 0;margin:0' },
     'Works with any watch that shows your phone’s notifications: Noise, Fire-Boltt, boAt, Amazfit, Galaxy Watch and others. ',
-    'In your watch’s phone app (NoiseFit, Da Fit, boAt Crest…), turn on notifications for Rylaide. ', WATCH_NOTE);
+    'In your watch’s phone app (NoiseFit, Da Fit, boAt Crest…), turn on notifications and music control. ',
+    'Music screen: the watch shows the next turn, speed and voice instead of a song; next/previous changes the page. If music is playing on your phone, the watch shows the music instead. ', WATCH_NOTE);
   if (!engine.watchSupported()) {
     return h('div', {}, h('div', { class: 'list' }, listItem({ icon: 'watch', title: 'Show on my watch', sub: 'Available in the Rylaide Android app' })), how);
   }
@@ -166,7 +167,8 @@ function watchSection() {
     snackbar('Sent. Look at your watch.');
   } });
   test.hidden = !engine.watchOn();
-  return h('div', {}, h('div', { class: 'list' },
+  const music = listItem({ icon: 'two_wheeler', title: 'Ride on the watch’s music screen', sub: 'Live turn, speed, voice. Play/pause = mute.', trail: switchEl({ checked: engine.watchDisplayOn(), label: 'Ride on the watch’s music screen', onchange: (v) => { engine.setWatchDisplay(v); if (v) snackbar('During a ride, open the music screen on your watch'); } }) });
+  return h('div', {}, h('div', { class: 'list' }, music,
     listItem({ icon: 'watch', title: 'Show on my watch', sub: 'Turns, arrival, breaks, group SOS', trail: switchEl({ checked: engine.watchOn(), label: 'Show on my watch', onchange: (v) => {
       const ok = engine.setWatch(v);
       test.hidden = !v;

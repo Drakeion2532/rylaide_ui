@@ -115,6 +115,23 @@ class RylaideBridge(private val activity: MainActivity) {
         return true
     }
 
+    // ---------------------------------------------------------------- ride service
+    /** Ride started: GPS keeps running with the screen off; watchDisplay puts the ride on the watch's music screen. */
+    @JavascriptInterface
+    fun rideStart(watchDisplay: Boolean) = activity.startRide(watchDisplay)
+
+    @JavascriptInterface
+    fun rideStop() = activity.stopRide()
+
+    /** Three short lines for the watch's music screen (title, artist, album). */
+    @JavascriptInterface
+    fun watchDisplay(title: String?, artist: String?, album: String?) {
+        RideService.running?.show(title ?: "", artist ?: "", album ?: "")
+    }
+
+    @JavascriptInterface
+    fun watchDisplayOn(on: Boolean) { RideService.running?.setWatchDisplay(on) }
+
     // ---------------------------------------------------------------- group voice
     // The web app drives it (engine.js syncVoice); the phone does the audio, Bluetooth and screen-off running.
 

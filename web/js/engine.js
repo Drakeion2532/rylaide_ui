@@ -1,7 +1,7 @@
 // Ride engine: location, live group, recording, navigation, voice, SOS. Screens listen through state.on().
 import { store, haversine, distToLine, fmtDist, vibrate, native } from './util.js';
 import { api } from './api.js';
-import { ctx, rt, emit, setting, setSetting } from './state.js';
+import { ctx, rt, emit, on, setting, setSetting } from './state.js';
 import { PushToTalk, VoicePlayer } from './voice.js';
 import { LiveMic, LivePlayer, RVP, fnv32 } from './livevoice.js';
 import { setThemePosition } from './theme.js';
@@ -166,12 +166,14 @@ let watchId = null;
 export function startLocation() {
   if (!navigator.geolocation) { ctx.gps = 'unsupported'; emit('gps', ctx.gps); return; }
   if (watchId !== null) return;
-  watchId = navigator.geolocation.watchPosition(onPosition, (e) => {
+  watchId = navigator.geolocation.watchPosition(onWebPosition, (e) => {
     ctx.gps = e.code === 1 ? 'denied' : 'searching';
     emit('gps', ctx.gps);
   }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
 }
 
+let nativeGpsAt = 0;
+function onWebPosition(p) { if (Date.now() - nativeGpsAt > 4000) onPosition(p); } // the app's own GPS wins during a ride
 function onPosition(p) {
   const c = p.coords;
   const prev = ctx.pos;
@@ -236,6 +238,7 @@ export function startRide({ dest = null, route = null, solo = !ctx.group, pillio
   };
   store.set('activeRide', { startedAt: ctx.ride.startedAt });
   requestWakeLock();
+  if (hasRideService()) { try { native().rideStart(watchDisplayOn()); } catch { /* ignore */ } watchPage = null; setTimeout(() => pushWatch(true), 500); }
   crash.start();
   if (mapTurns()) compass.startCompass();
   syncVoice();
@@ -337,6 +340,7 @@ export async function endRide() {
   crash.stop();
   compass.stopCompass();
   clearWatch();
+  if (hasRideService()) try { native().rideStop(); } catch { /* ignore */ }
   syncVoice();
   if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
@@ -397,6 +401,73 @@ export function setWatch(on) {
   if (!on) { clearWatch(); return true; }
   try { return native().watchSetup(); } catch { return false; }
 }
+
+// Watch display: the ride on the music screen of almost any watch (Android app). Three lines per page;
+// the watch's play/pause mutes the mic, next/previous changes the page.
+const hasRideService = () => { try { return typeof native()?.rideStart === 'function'; } catch { return false; } };
+export const watchDisplayOn = () => hasRideService() && setting('watchDisplay', false);
+export function setWatchDisplay(on) {
+  setSetting('watchDisplay', !!on);
+  if (ctx.ride && hasRideService()) { try { native().watchDisplayOn(!!on); } catch { /* ignore */ } pushWatch(true); }
+}
+const PAGES = ['turn', 'speed', 'group'];
+let watchPage = null, watchLast = '', watchT = 0;
+function pagesNow() {
+  return PAGES.filter((p) => (p === 'turn' ? !!ctx.ride?.route : p === 'group' ? !!(ctx.group && !ctx.ride?.solo) : true));
+}
+const TURN = { left: 'LEFT', right: 'RIGHT', 'slight left': 'BEAR LEFT', 'slight right': 'BEAR RIGHT', 'sharp left': 'SHARP LEFT', 'sharp right': 'SHARP RIGHT', uturn: 'U-TURN', straight: 'AHEAD' };
+export function watchLines(page = watchPage) {
+  const r = ctx.ride;
+  const kmh = ctx.pos && Number.isFinite(ctx.pos.speed) ? Math.round(Math.max(0, ctx.pos.speed) * 3.6) : 0;
+  const mins = r ? Math.floor((Date.now() - r.startedAt) / 60000) : 0;
+  const time = `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`;
+  if (page === 'turn' && r?.route) {
+    const ns = navState();
+    if (ns.arrived) return ['ARRIVED', short(r.dest.name), `${kmh} km/h`];
+    const t = ns.step.type;
+    const word = t === 'arrive' ? 'ARRIVE' : t === 'roundabout' || t === 'rotary' ? 'ROUNDABOUT' : TURN[ns.step.modifier] || 'AHEAD';
+    return [`${word} ${fmtDist(ns.toNext)}`, ns.step.road || ns.step.instruction, `${kmh} km/h · ${fmtDist(ns.remaining)} left`];
+  }
+  if (page === 'group' && ctx.group) {
+    const mic = micState();
+    const talking = [...ctx.speakers].map((id) => ctx.group.members.find((m) => m.id === id)?.name.split(' ')[0]).filter(Boolean);
+    return [mic === 'muted' ? 'MIC MUTED' : mic === 'live' ? (ctx.talking ? 'TALKING' : 'MIC ON') : 'VOICE OFF',
+      talking.length ? `${talking.join(', ')} talking` : `${onlineRiders().length} riders · ${ctx.group.name}`, 'Pause = mute · Next = page'];
+  }
+  return [`${kmh} km/h`, r ? `${fmtDist(r.dist)} · ${time}` : 'Rylaide', r?.solo ? 'Solo ride' : ctx.group?.name || ''];
+}
+function pushWatch(force) {
+  if (!ctx.ride || !watchDisplayOn()) return;
+  const pages = pagesNow();
+  if (!pages.includes(watchPage)) watchPage = pages[0];
+  const now = Date.now();
+  if (!force && now - watchT < 1500) return; // cheap watches update slowly; once every 1.5 s is plenty
+  const lines = watchLines();
+  const key = lines.join('|');
+  if (!force && key === watchLast) return;
+  watchT = now; watchLast = key;
+  try { native().watchDisplay(...lines); } catch { /* ignore */ }
+}
+['pos', 'nav', 'talking', 'mic', 'speaking', 'group'].forEach((t) => on(t, () => pushWatch(false)));
+
+// The Android app's ride service calls these.
+window.__rylaideRide = {
+  position(json) {
+    let p; try { p = JSON.parse(json); } catch { return; }
+    nativeGpsAt = Date.now();
+    onPosition({ coords: { latitude: p.lat, longitude: p.lng, accuracy: p.acc, speed: p.speed ?? null, heading: p.heading ?? null }, timestamp: p.ts });
+  },
+  button(action) {
+    if (action === 'playpause') {
+      if (micState() === 'live' || micState() === 'muted') { setMicMuted(!ctx.micMuted); speak(ctx.micMuted ? 'Mic muted' : 'Mic on', 'alert'); }
+    } else {
+      const pages = pagesNow();
+      const i = pages.indexOf(watchPage);
+      watchPage = pages[(i + (action === 'previous' ? pages.length - 1 : 1)) % pages.length];
+    }
+    pushWatch(true);
+  },
+};
 
 export function speak(text, kind = 'nav', { force } = {}) {
   const mode = voiceGuide();

@@ -609,7 +609,9 @@ async def main():
             # The Android app's bridge, stood in for: watch notifications are recorded instead of posted.
             await A.evaluate("""window.__watch = []; window.RylaideAndroid = {
                 watchNotify: (t, x, k) => window.__watch.push([t, x, k]), watchClear: () => window.__watch.push(['clear']),
-                watchSetup: () => { window.__watch.push(['setup']); return true }, speak() {}, vibrate() {}, keepAwake() {} }""")
+                watchSetup: () => { window.__watch.push(['setup']); return true }, speak() {}, vibrate() {}, keepAwake() {},
+                rideStart: (w) => window.__watch.push(['ride', w]), rideStop: () => window.__watch.push(['ridestop']),
+                watchDisplay: (a, b, c) => (window.__disp ||= []).push([a, b, c]), watchDisplayOn: () => {} }""")
             await A.wait_for_timeout(1200)  # the last ride's summary finishes opening first
             await A.evaluate("window.__rylaide.router.push('riding')")
             await expect(A.locator(f'{TOP}[data-screen=riding]')).to_contain_text('Show on my watch')
@@ -617,15 +619,28 @@ async def main():
             await expect(A.locator('.snackbar').last).to_contain_text('Sent a test')
             await tap(A, '[data-screen=riding] .list-item:has-text("Send a test to my watch")')
             await shot(A, '14b-watch-settings')
-            got = [w for w in await A.evaluate("window.__watch") if w != ['clear']]
+            got = [w for w in await A.evaluate("window.__watch") if w not in (['clear'], ['ridestop'])]
             assert got[0] == ['setup'] and got[1][0] == 'Test from Rylaide', got
             # A rider's SOS buzzes the watch once, even if the same alert arrives again (reconnect).
             await A.evaluate("""() => { const rt = window.__rylaide.rt; const a = { userId: 'u_test_sos', name: 'Bilal', lat: 18.52, lng: 73.85, ts: Date.now() };
                 rt.emit('sos', { alert: a }); rt.emit('sos', { alert: { ...a } }); rt.emit('sos_cancel', { userId: 'u_test_sos' }) }""")
             sos = await A.evaluate("window.__watch.filter(w => w[2] === 'sos')")
             assert len(sos) == 1 and 'Bilal' in sos[0][0], sos
+            # Ride on the watch's music screen: pages, the watch's buttons, and the app's own GPS (phone in a pocket).
+            await tap(A, '[data-screen=riding] .list-item:has-text("music screen") input')
+            await A.evaluate("window.__rylaide.engine.startRide({ quick: true, solo: true })")
+            await A.wait_for_function("(window.__disp || []).length > 0", timeout=3000)
+            assert ['ride', True] in await A.evaluate("window.__watch"), 'ride service started with the watch display'
+            await A.evaluate("window.__rylaideRide.position(JSON.stringify({ lat: 18.5310, lng: 73.8450, acc: 5, speed: 12.5, heading: 90, ts: Date.now() }))")
+            await A.wait_for_function("window.__disp.some(d => d[0] === '45 km/h')", timeout=4000)
+            assert await A.evaluate("window.__rylaide.ctx.pos.lat") == 18.531, 'app GPS fixes drive the ride'
+            n = await A.evaluate("window.__disp.length")
+            await A.evaluate("window.__rylaideRide.button('next')")  # solo quick ride: one page, stays on speed
+            assert (await A.evaluate("window.__disp[window.__disp.length - 1][0]")) == '45 km/h'
+            await A.evaluate("window.__rylaide.engine.endRide()")
+            assert ['ridestop'] in await A.evaluate("window.__watch")
             await A.evaluate("delete window.RylaideAndroid; window.__rylaide.router.back()")
-        await step('Smartwatch: setting (Android app), test notification, group SOS sent to the watch once', smartwatch())
+        await step('Smartwatch: notifications (test, group SOS once), ride on the watch music screen, app GPS with the screen off', smartwatch())
 
         async def offline():
             await tap(B, '[data-screen=home] .hero .btn') if await B.locator('[data-screen=home]').is_visible() else None

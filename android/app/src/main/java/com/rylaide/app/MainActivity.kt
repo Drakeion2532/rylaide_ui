@@ -85,6 +85,7 @@ class MainActivity : Activity() {
         }
         bridge = RylaideBridge(this)
         RideVoiceService.sink = voiceSink
+        RideService.sink = rideSink
         web.addJavascriptInterface(bridge, "RylaideAndroid")
         web.webViewClient = Client()
         web.webChromeClient = Chrome()
@@ -122,8 +123,9 @@ class MainActivity : Activity() {
     override fun onPause() { web.onPause(); super.onPause() }
 
     override fun onDestroy() {
-        if (isFinishing) stopVoice()
+        if (isFinishing) { stopVoice(); stopRide() }
         RideVoiceService.sink = null
+        RideService.sink = null
         bridge.shutdown()
         web.destroy()
         super.onDestroy()
@@ -179,6 +181,27 @@ class MainActivity : Activity() {
         val i = Intent(this, com.rylaide.app.voice.RideVoiceService::class.java)
             .setAction(RideVoiceService.ACTION_START).putExtra(RideVoiceService.EXTRA_CONFIG, config)
         try { startForegroundService(i) } catch (e: Exception) { voiceSink.state(JSONObject().put("mic", "error").put("error", "Couldn’t start group voice.")) }
+    }
+
+    // ---------------------------------------------------------------- ride service (pocket GPS, watch display)
+    private val rideSink = object : RideService.Sink {
+        override fun position(json: JSONObject) {
+            val q = JSONObject.quote(json.toString())
+            web.post { web.evaluateJavascript("window.__rylaideRide&&__rylaideRide.position($q)", null) }
+        }
+        override fun watchButton(action: String) {
+            web.post { web.evaluateJavascript("window.__rylaideRide&&__rylaideRide.button('$action')", null) }
+        }
+    }
+
+    fun startRide(watchDisplay: Boolean) = runOnUiThread {
+        val i = Intent(this, RideService::class.java).setAction(RideService.ACTION_START).putExtra(RideService.EXTRA_WATCH, watchDisplay)
+        try { startForegroundService(i) } catch (e: Exception) { /* GPS keeps working while the screen is on */ }
+    }
+
+    fun stopRide() {
+        if (RideService.running == null) return
+        startService(Intent(this, RideService::class.java).setAction(RideService.ACTION_STOP))
     }
 
     /** For smartwatch notifications (Android 13+); a test notification follows once allowed. */

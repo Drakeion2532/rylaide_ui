@@ -136,6 +136,8 @@ register('riding', (el) => {
       listItem({ icon: 'volume_up', title: 'Test the voice', sub: 'Hear how directions sound', onclick: () => engine.speak('In 500 metres, turn left onto Ghat Road.', 'nav', { force: true }) })),
     h('div', { style: 'padding:12px 4px 0' }, h('div', { class: 'label-l variant', style: 'margin-bottom:8px' }, 'Voice guidance (also on the map while riding)'),
       segmented(VOICE_MODES.map((m) => ({ value: m.value, label: m.label })), engine.voiceGuide(), (v) => engine.setVoiceGuide(v), { label: 'Voice guidance' })),
+    sectionTitle('Smartwatch'),
+    watchSection(),
     sectionTitle('Breaks'),
     h('div', { class: 'list' }, toggle('free_breakfast', 'Break reminders', 'On every ride. Always on when you ride with a pillion.', 'breaks', false)),
     h('div', { style: 'padding:12px 4px 0' }, h('div', { class: 'label-l variant', style: 'margin-bottom:8px' }, 'Remind me every'),
@@ -147,6 +149,31 @@ register('riding', (el) => {
       toggle('notifications_active', 'Ride invites', 'Show when someone in your group starts a ride', 'invites', true)),
     h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Distances are in kilometres and speeds in km/h. Over 80 km/h the speedometer turns amber.'));
 });
+
+/**
+ * Smartwatch: budget watches (Noise, Fire-Boltt, boAt…) can't run apps but show the phone's notifications,
+ * so turns and group alerts go to the watch as notifications. Only in the Android app.
+ */
+function watchSection() {
+  const how = h('p', { class: 'body-s variant', style: 'padding:8px 4px 0;margin:0' },
+    'Works with any watch that shows your phone’s notifications: Noise, Fire-Boltt, boAt, Amazfit, Galaxy Watch and others. ',
+    'In your watch’s phone app (NoiseFit, Da Fit, boAt Crest…), turn on notifications for Rylaide. ', WATCH_NOTE);
+  if (!engine.watchSupported()) {
+    return h('div', {}, h('div', { class: 'list' }, listItem({ icon: 'watch', title: 'Show on my watch', sub: 'Available in the Rylaide Android app' })), how);
+  }
+  const test = listItem({ icon: 'send', title: 'Send a test to my watch', sub: 'Check it appears on your watch', onclick: () => {
+    engine.toWatch('Test from Rylaide', 'In 300 m, turn left onto Ring Road');
+    snackbar('Sent. Look at your watch.');
+  } });
+  test.hidden = !engine.watchOn();
+  return h('div', {}, h('div', { class: 'list' },
+    listItem({ icon: 'watch', title: 'Show on my watch', sub: 'Turns, arrival, breaks, group SOS', trail: switchEl({ checked: engine.watchOn(), label: 'Show on my watch', onchange: (v) => {
+      const ok = engine.setWatch(v);
+      test.hidden = !v;
+      if (v) snackbar(ok ? 'Sent a test to your watch' : 'Notifications are off for Rylaide. Turn them on in your phone’s settings.');
+    } }) }),
+    test), how);
+}
 
 // ---------------------------------------------------------------- 47 Safety & SOS
 register('safety', (el) => {

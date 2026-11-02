@@ -605,6 +605,28 @@ async def main():
             await tap(A, '.dialog .btn >> nth=1')
         await step('Settings: Glove Mode 80 dp, Night theme, accent, persist after reload', settings())
 
+        async def smartwatch():
+            # The Android app's bridge, stood in for: watch notifications are recorded instead of posted.
+            await A.evaluate("""window.__watch = []; window.RylaideAndroid = {
+                watchNotify: (t, x, k) => window.__watch.push([t, x, k]), watchClear: () => window.__watch.push(['clear']),
+                watchSetup: () => { window.__watch.push(['setup']); return true }, speak() {}, vibrate() {}, keepAwake() {} }""")
+            await A.wait_for_timeout(1200)  # the last ride's summary finishes opening first
+            await A.evaluate("window.__rylaide.router.push('riding')")
+            await expect(A.locator(f'{TOP}[data-screen=riding]')).to_contain_text('Show on my watch')
+            await tap(A, '[data-screen=riding] .list-item:has-text("Show on my watch") input')
+            await expect(A.locator('.snackbar').last).to_contain_text('Sent a test')
+            await tap(A, '[data-screen=riding] .list-item:has-text("Send a test to my watch")')
+            await shot(A, '14b-watch-settings')
+            got = [w for w in await A.evaluate("window.__watch") if w != ['clear']]
+            assert got[0] == ['setup'] and got[1][0] == 'Test from Rylaide', got
+            # A rider's SOS buzzes the watch once, even if the same alert arrives again (reconnect).
+            await A.evaluate("""() => { const rt = window.__rylaide.rt; const a = { userId: 'u_test_sos', name: 'Bilal', lat: 18.52, lng: 73.85, ts: Date.now() };
+                rt.emit('sos', { alert: a }); rt.emit('sos', { alert: { ...a } }); rt.emit('sos_cancel', { userId: 'u_test_sos' }) }""")
+            sos = await A.evaluate("window.__watch.filter(w => w[2] === 'sos')")
+            assert len(sos) == 1 and 'Bilal' in sos[0][0], sos
+            await A.evaluate("delete window.RylaideAndroid; window.__rylaide.router.back()")
+        await step('Smartwatch: setting (Android app), test notification, group SOS sent to the watch once', smartwatch())
+
         async def offline():
             await tap(B, '[data-screen=home] .hero .btn') if await B.locator('[data-screen=home]').is_visible() else None
             await tap(B, '[data-mode=quick]')

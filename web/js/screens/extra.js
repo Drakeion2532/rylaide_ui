@@ -27,6 +27,7 @@ register('crash', (el, params) => {
   requestAnimationFrame(() => { r.querySelector('.bar').style.transitionDuration = `${SECS}s`; r.set(0); });
   if (!params.test && ctx.pos) api.get(`/api/reverse?lat=${ctx.pos.lat}&lng=${ctx.pos.lng}`).then((p) => { if (!done) where.textContent = ` near ${engine.short(p.name)}`; }).catch(() => {});
   engine.speak(params.test ? 'Crash detection test.' : 'Possible crash detected. Tap I am OK if you are fine.', 'alert');
+  if (!params.test) engine.toWatch('Possible crash detected', 'Tap “I’m OK” on your phone, or SOS goes to your group in 30 s', 'sos');
 
   // Alarm: rising beeps, louder in the last 10 seconds.
   let audio = null;

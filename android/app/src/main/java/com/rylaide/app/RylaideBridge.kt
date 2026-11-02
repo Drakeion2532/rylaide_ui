@@ -93,6 +93,28 @@ class RylaideBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun version(): String = BuildConfig.VERSION_NAME
 
+    // ---------------------------------------------------------------- smartwatch (through notifications)
+    private val watch by lazy { WatchNotifier(activity) }
+
+    /** Next turn, arrival, breaks, group SOS → a notification the watch's own phone app shows on the watch. */
+    @JavascriptInterface
+    fun watchNotify(title: String?, text: String?, kind: String?) {
+        if (title.isNullOrBlank()) return
+        watch.post(title, text ?: "", kind ?: "nav")
+    }
+
+    @JavascriptInterface
+    fun watchClear() = watch.clear()
+
+    /** Turning the setting on: ask for notification permission if needed, then send a test. Returns false if blocked. */
+    @JavascriptInterface
+    fun watchSetup(): Boolean {
+        if (watch.needsPermission()) { activity.askNotifications(); return true }
+        if (!watch.canPost()) return false
+        watch.post("Rylaide is on your watch", "Turns and group alerts will show here during rides.", "nav")
+        return true
+    }
+
     // ---------------------------------------------------------------- group voice
     // The web app drives it (engine.js syncVoice); the phone does the audio, Bluetooth and screen-off running.
 

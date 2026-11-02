@@ -152,8 +152,12 @@ function onLoc(loc) {
 }
 
 function onSos(a) {
+  const known = ctx.sos.has(a.userId); // the same alert again (reconnect snapshot) doesn't buzz the watch twice
   ctx.sos.set(a.userId, a);
-  if (a.userId !== ctx.user?.id) vibrate([400, 150, 400, 150, 800]);
+  if (a.userId !== ctx.user?.id) {
+    vibrate([400, 150, 400, 150, 800]);
+    if (!known) toWatch(`SOS · ${a.name || 'A rider'} needs help`, 'Open Rylaide on your phone to see where', 'sos');
+  }
   emit('sos', a);
 }
 
@@ -239,7 +243,10 @@ export function startRide({ dest = null, route = null, solo = !ctx.group, pillio
   if (!solo && ctx.group) {
     api.post(`/api/groups/${ctx.group.id}/ride`, { riders: riders || onlineRiders().map((m) => m.id), destination: dest ? short(dest.name) : null, lat: dest?.lat, lng: dest?.lng }).catch(() => {});
   }
-  if (route) speak(`Starting navigation to ${short(dest.name)}. ${route.steps[ctx.ride.k]?.instruction || ''}`);
+  if (route) {
+    speak(`Starting navigation to ${short(dest.name)}. ${route.steps[ctx.ride.k]?.instruction || ''}`);
+    toWatch(`To ${short(dest.name)}`, route.steps[ctx.ride.k]?.instruction || 'Navigation started');
+  } else toWatch('Ride started', solo ? 'Solo ride' : `Group ride · ${ctx.group?.name || ''}`);
   emit('ride', ctx.ride);
 }
 
@@ -268,6 +275,7 @@ setInterval(() => {
   if (!r || !(r.pillion || setting('breaks', false)) || Date.now() < r.nextBreak) return;
   r.nextBreak = Date.now() + setting('breakMins', 45) * 60e3;
   speak(r.pillion ? 'Time for a short break. Check on your pillion.' : 'Time for a short break.', 'alert');
+  toWatch('Time for a break', r.pillion ? 'Check on your pillion' : 'Stop somewhere safe and stretch');
   vibrate([200, 100, 200]);
   emit('banner', { tone: 'warn', icon: 'free_breakfast', title: 'Time for a break', sub: r.pillion ? 'Stop safely, stretch and check on your pillion' : 'Stop safely and stretch for a few minutes', ms: 15000 });
   emit('break', r);
@@ -328,6 +336,7 @@ export async function endRide() {
   releaseWakeLock();
   crash.stop();
   compass.stopCompass();
+  clearWatch();
   syncVoice();
   if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
@@ -372,6 +381,23 @@ export function setVoiceGuide(mode) {
   if (mode === 'off') { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } }
   emit('voice-guide', mode);
 }
+// ---------------------------------------------------------------- smartwatch
+// Budget watches (Noise, Fire-Boltt, boAt…) can't run apps, but they show the phone's notifications.
+// In the Android app, ride info goes out as short notifications the watch's own phone app passes on.
+export const watchSupported = () => { try { return typeof native()?.watchNotify === 'function'; } catch { return false; } };
+export const watchOn = () => watchSupported() && setting('watch', false);
+export function toWatch(title, text = '', kind = 'nav') {
+  if (!watchOn()) return;
+  try { native().watchNotify(String(title), String(text), kind); } catch { /* ignore */ }
+}
+function clearWatch() { if (watchSupported()) try { native().watchClear(); } catch { /* ignore */ } }
+/** Turning it on: notification permission (Android 13+) and a test notification. False if notifications are blocked. */
+export function setWatch(on) {
+  setSetting('watch', !!on);
+  if (!on) { clearWatch(); return true; }
+  try { return native().watchSetup(); } catch { return false; }
+}
+
 export function speak(text, kind = 'nav', { force } = {}) {
   const mode = voiceGuide();
   if (!force && (mode === 'off' || (mode === 'alerts' && kind !== 'alert'))) return;
@@ -395,6 +421,7 @@ function updateNav(pos) {
   if (toDest < 35 && !r.arrived) {
     r.arrived = true;
     speak('You have arrived.', 'alert');
+    toWatch('You’ve arrived', short(r.dest.name));
     emit('arrived', r.dest);
     return emit('nav', navState());
   }
@@ -403,6 +430,7 @@ function updateNav(pos) {
   if (r.off >= 2 && Date.now() - r.lastReroute > 20000) {
     r.lastReroute = Date.now();
     speak('Rerouting', 'alert');
+    toWatch('Rerouting', 'Finding a new route');
     fetchRoute(r.dest).then((route) => {
       if (ctx.ride !== r) return;
       r.route = route; r.k = Math.min(1, route.steps.length - 1); r.spoken = {}; r.off = 0;
@@ -418,7 +446,12 @@ function updateNav(pos) {
   }
   for (const [mark, say] of [[600, `In ${fmtDist(500)}, `], [150, '']]) {
     const key = `${r.k}:${mark}`;
-    if (d <= mark && !r.spoken[key]) { r.spoken[key] = true; speak(`${say}${step.instruction}`); break; }
+    if (d <= mark && !r.spoken[key]) {
+      r.spoken[key] = true;
+      speak(`${say}${step.instruction}`);
+      toWatch(mark === 150 ? 'Now' : `In ${fmtDist(Math.round(d / 50) * 50)}`, step.instruction);
+      break;
+    }
   }
   r.toNext = d;
   emit('nav', navState());

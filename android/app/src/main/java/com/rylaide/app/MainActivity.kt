@@ -181,6 +181,11 @@ class MainActivity : Activity() {
         try { startForegroundService(i) } catch (e: Exception) { voiceSink.state(JSONObject().put("mic", "error").put("error", "Couldn’t start group voice.")) }
     }
 
+    /** For smartwatch notifications (Android 13+); a test notification follows once allowed. */
+    fun askNotifications() = runOnUiThread {
+        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+    }
+
     fun stopVoice() {
         pendingVoice = null
         if (RideVoiceService.hub == null) return
@@ -335,6 +340,10 @@ class MainActivity : Activity() {
                 pendingGeo = null
                 if (!ok) explainDenied("Location")
             }
+            REQ_NOTIFY -> {
+                if (ok) WatchNotifier(this).post("Rylaide is on your watch", "Turns and group alerts will show here during rides.", "nav")
+                else explainDenied("Notifications")
+            }
             REQ_VOICE -> {
                 val cfg = pendingVoice
                 pendingVoice = null
@@ -368,5 +377,6 @@ class MainActivity : Activity() {
         private const val REQ_MIC = 12
         private const val REQ_FILE = 13
         private const val REQ_VOICE = 14
+        private const val REQ_NOTIFY = 15
     }
 }

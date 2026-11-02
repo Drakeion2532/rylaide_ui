@@ -86,6 +86,28 @@ function connChip() {
   return connectionStatus(state === 'internet' ? 'internet' : state, true);
 }
 
+/** Map turns with you (heading up, like Google Maps) or stays north up. One tap switches; remembered. */
+function compassButton(getMap) {
+  const btn = h('button', { type: 'button', class: 'icon-btn surface compass-btn' });
+  const look = () => {
+    const on = engine.mapTurns();
+    btn.replaceChildren(ic(on ? 'navigation' : 'explore', { fill: on }));
+    btn.classList.toggle('on', on);
+    btn.dataset.mapTurns = String(on);
+    btn.setAttribute('aria-label', on ? 'Map turns with you. Tap for north up' : 'North up. Tap so the map turns with you');
+    btn.setAttribute('aria-pressed', String(on));
+  };
+  btn.onclick = async () => {
+    const on = !engine.mapTurns();
+    await engine.setMapTurns(on);
+    if (on) { const m = getMap(); if (m && ctx.pos) { m.setFollow(true); m.centerOn(ctx.pos.lng, ctx.pos.lat, 16); } }
+    snackbar(on ? 'Map turns with you' : 'North up', { ms: 2000 });
+  };
+  look();
+  btn.cleanup = onMany({ 'map-turns': look });
+  return btn;
+}
+
 /** 25q: log a fuel stop mid-ride. */
 function refillSheet() {
   sheet((close) => {
@@ -190,20 +212,23 @@ register('ride', (el) => {
   tick();
 
   // ---- views
-  let speedBubble = null, maneuverSlot = null, strip = null, gauge = null;
+  let speedBubble = null, maneuverSlot = null, strip = null, gauge = null, cardCompass = null;
   const mapView = () => {
     const mapEl = h('div', { class: 'map' });
     maneuverSlot = h('div');
     speedBubble = h('div', { class: 'speed-bubble', 'aria-label': 'Speed' }, h('b', { class: 'tabular' }, '0'), h('span', { class: 'body-s' }, 'km/h'));
     const vg = voiceGuideButton({ getMode: engine.voiceGuide, setMode: engine.setVoiceGuide });
-    vg.classList.add('vg-on-card');
-    const card = h('div', { class: 'map-card' }, mapEl, maneuverSlot, speedBubble, vg,
+    cardCompass?.cleanup();
+    cardCompass = compassButton(() => map);
+    const card = h('div', { class: 'map-card' }, mapEl, maneuverSlot, speedBubble, h('div', { class: 'vg-on-card stack gap12' }, vg, cardCompass),
       h('button', { type: 'button', class: 'btn fs-btn', onclick: () => push('ridemap') }, ic('open_in_full'), 'Full screen'));
     strip = h('div', { class: 'trip-strip' });
     content.replaceChildren(card, strip);
     map = new RideMap(mapEl, { zoom: 16, onFollowChange: () => {} });
     const m = map;
     m.init().then(() => m.resize()); // map may already be replaced if the rider switched views
+    m.setHeadingUp(engine.mapTurns());
+    if (ctx.heading) m.setHeading(ctx.heading.deg);
     if (ctx.ride.route) { map.setRoutes([ctx.ride.route], 0, { fit: false, labels: false }); map.setDestination(ctx.ride.dest.lng, ctx.ride.dest.lat); }
     map.setTrack(ctx.ride.points);
     if (ctx.pos) map.setMe(ctx.pos);
@@ -299,6 +324,8 @@ register('ride', (el) => {
     break: () => { if (view === 'pillion') render(); },
     refill: renderChips,
     track: (pts) => map?.setTrack(pts),
+    heading: (hd) => map?.setHeading?.(hd.deg),
+    'map-turns': (on) => map?.setHeadingUp?.(on),
     route: (r) => map?.setRoutes([r], 0, { fit: false, labels: false }),
     loc: (l) => { map?.upsertRider(l, { sos: ctx.sos.has(l.userId) }); if (view === 'group') groupView(); },
     'rider-left': (id) => map?.removeRider(id),
@@ -313,7 +340,7 @@ register('ride', (el) => {
   });
   const staleT = setInterval(() => map?.markStale(STALE), 15000);
   if (ctx.gps === 'denied') setTimeout(() => import('../state.js').then(({ emit }) => emit('banner', { tone: 'warn', icon: 'location_off', title: 'Location access is off', sub: 'Needed for navigation and ride tracking', sticky: true })), 400);
-  return () => { clearInterval(tickT); clearInterval(staleT); offs(); controls.cleanup?.(); map?.destroy(); };
+  return () => { clearInterval(tickT); clearInterval(staleT); offs(); controls.cleanup?.(); cardCompass?.cleanup(); map?.destroy(); };
 });
 
 // ---------------------------------------------------------------- full-screen map
@@ -325,11 +352,14 @@ register('ridemap', (el, params) => {
   const fit = iconButton('fit_screen', { label: 'Show everyone', style: 'surface', onclick: () => { map.setFollow(false); map.fitAll(); } });
   const closeBtn = iconButton('close_fullscreen', { label: 'Close full screen', style: 'surface', onclick: back });
   const vg = voiceGuideButton({ getMode: engine.voiceGuide, setMode: engine.setVoiceGuide });
+  const compass = compassButton(() => map);
   const panel = h('div', { class: 'ride-panel' });
-  const fabs = h('div', { class: 'map-fab stack gap12' }, closeBtn, vg, fit, recenter);
+  const fabs = h('div', { class: 'map-fab stack gap12' }, closeBtn, vg, compass, fit, recenter);
   el.append(mapEl, top, fabs, panel);
   const map = new RideMap(mapEl, { zoom: 16, onFollowChange: (f) => recenter.classList.toggle('filled', f) });
   map.init();
+  map.setHeadingUp(engine.mapTurns() && !params.focus);
+  if (ctx.heading) map.setHeading(ctx.heading.deg);
   if (params.focus) { map.follow = false; map.centerOn(params.focus.lng, params.focus.lat, 16); }
   if (ctx.ride?.route) { map.setRoutes([ctx.ride.route], 0, { fit: false, labels: false }); map.setDestination(ctx.ride.dest.lng, ctx.ride.dest.lat); }
   if (ctx.ride) map.setTrack(ctx.ride.points);
@@ -351,13 +381,15 @@ register('ridemap', (el, params) => {
           h('span', { class: 'body-m variant' }, ns ? `${fmtKm(ns.remaining)} km left · Arrive ${arriveAt(ns.secs)}` : ctx.group ? `${engine.onlineRiders().length} riding now` : 'No ride in progress')),
         h('div', { class: 'speed-bubble' }, h('b', { class: 'tabular' }, String(speedKmh())), h('span', { class: 'body-s' }, 'km/h'))),
       controls);
-    requestAnimationFrame(() => (fabs.style.bottom = `${panel.offsetHeight + 24}px`));
+    requestAnimationFrame(() => { fabs.style.bottom = `${panel.offsetHeight + 24}px`; map.setPadBottom(panel.offsetHeight + 8); });
   };
   renderTop(); renderPanel();
   const offs = onMany({
     pos: (p) => { map.setMe(p); const b = panel.querySelector('.speed-bubble b'); if (b) b.textContent = speedKmh(); },
     nav: () => { renderTop(); const ns = engine.navState(); if (ns) { panel.querySelector('.eta .main').firstChild.textContent = fmtEta(ns.secs); } },
     track: (pts) => map.setTrack(pts),
+    heading: (hd) => map.setHeading(hd.deg),
+    'map-turns': (on) => map.setHeadingUp(on),
     route: (r) => map.setRoutes([r], 0, { fit: false, labels: false }),
     loc: (l) => map.upsertRider(l, { sos: ctx.sos.has(l.userId) }),
     'rider-left': (id) => map.removeRider(id),
@@ -366,7 +398,7 @@ register('ridemap', (el, params) => {
     conn: renderTop, group: renderPanel,
   });
   const staleT = setInterval(() => map.markStale(STALE), 15000);
-  return () => { offs(); clearInterval(staleT); controls?.cleanup?.(); map.destroy(); };
+  return () => { offs(); clearInterval(staleT); controls?.cleanup?.(); compass.cleanup(); map.destroy(); };
 });
 
 // ---------------------------------------------------------------- SOS countdown

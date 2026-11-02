@@ -30,7 +30,21 @@ function constraints(deviceId, noiseSuppression = true) {
   };
 }
 
-export async function getMic(deviceId = store.get('micId', ''), { noiseSuppression = true } = {}) {
+/** Smartwatch and fitness-band mics are never used for riding (same rule as the Android app). */
+export const isWatchMic = (label = '') => /watch|\bband\b|fitbit|amazfit|galaxy fit|wear ?os|gear s|noisefit|fire-boltt|boat wave/i.test(label);
+
+export async function getMic(deviceId = store.get('micId', ''), opts = {}) {
+  const stream = await openMic(deviceId, opts);
+  const label = stream.getAudioTracks()[0]?.label || '';
+  if (!isWatchMic(label)) return stream;
+  // The phone handed us a watch's mic (it's connected for calls): switch to the phone's or the headset's.
+  const other = (await listMics()).find((d) => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  if (!other) return stream;
+  stream.getTracks().forEach((t) => t.stop());
+  return openMic(other.deviceId, opts);
+}
+
+async function openMic(deviceId, { noiseSuppression = true } = {}) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser can’t use the microphone. Open Rylaide in Chrome or Safari.');
   try {
     return await navigator.mediaDevices.getUserMedia(constraints(deviceId, noiseSuppression));
@@ -359,6 +373,6 @@ export class MicTest {
 export async function listMics() {
   try {
     const all = await navigator.mediaDevices.enumerateDevices();
-    return all.filter((d) => d.kind === 'audioinput');
+    return all.filter((d) => d.kind === 'audioinput' && !isWatchMic(d.label));
   } catch { return []; }
 }

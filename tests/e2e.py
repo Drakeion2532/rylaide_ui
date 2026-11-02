@@ -292,6 +292,13 @@ async def main():
             await tap(A, P('check') + ' .screen-foot .btn.filled')
             await expect(A.locator('.step-caption')).to_have_text('Step 3 of 5 · Headset')
             await expect(A.locator(P('headset') + ' [role=status], ' + P('headset') + ' .mini-meter')).to_be_visible()
+            # 21: sound from the headset (default) or the phone speaker for car rides; watch mics never used
+            await expect(A.locator(P('headset'))).to_contain_text('Sound comes from')
+            await expect(A.locator(P('headset'))).to_contain_text('smartwatch')
+            await tap(A, P('headset') + ' [aria-label="Sound comes from"] [data-value=speaker]')
+            await expect(A.locator(P('headset'))).to_contain_text('For car rides')
+            assert await A.evaluate("JSON.parse(localStorage.getItem('rylaide.audioOut'))") == 'speaker'
+            await tap(A, P('headset') + ' [aria-label="Sound comes from"] [data-value=headset]')
             await tap(A, P('headset') + ' .screen-foot .btn')
             await expect(A.locator('.step-caption')).to_have_text('Step 4 of 5 · Where to')
             await A.fill('.search-bar input', 'nowhere')
@@ -366,6 +373,25 @@ async def main():
             await tap(A, '.ride-bar .btn')
             await expect(A.locator('[data-screen=ride]')).to_be_visible()
         await step('Ride hub: timer, rider on map, speed gauge, group view, 28/29/25 full screens, minimise + resume', hub_views())
+
+        async def map_turns():
+            # Default: the map turns with you. Turning the phone to face east (compass) turns the map to 90°.
+            await tap(A, '[role=tab][data-value=map]') if await A.locator('[role=tab][data-value=map][aria-selected=false]').count() else None
+            btn = '[data-screen=ride] .map-card .compass-btn'
+            await expect(A.locator(f'{btn}[data-map-turns=true]')).to_be_visible(timeout=6000)
+            bearing = "(() => { const m = document.querySelector('[data-screen=ride] .map-card .map').__rideMap?.map; return m ? m.getBearing() : null })()"
+            await A.evaluate("""async () => { for (let i = 0; i < 60; i++) { window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha: 270, beta: 80, gamma: 0, absolute: true })); await new Promise(r => setTimeout(r, 16)); } }""")
+            await A.wait_for_function(f"() => {{ const b = {bearing}; return b !== null && Math.abs(((b - 90) % 360 + 540) % 360 - 180) < 6 }}", timeout=6000)
+            assert abs(await A.evaluate("window.__rylaide.ctx.heading.deg") - 90) < 3
+            await shot(A, '09d-map-turns')
+            # One tap: north up again (remembered).
+            await tap(A, btn)
+            await expect(A.locator(f'{btn}[data-map-turns=false]')).to_be_visible()
+            await A.wait_for_function(f"() => Math.abs({bearing}) < 1", timeout=4000)
+            assert await A.evaluate("JSON.parse(localStorage.getItem('rylaide.mapHeading'))") is False
+            await tap(A, btn)
+            await expect(A.locator(f'{btn}[data-map-turns=true]')).to_be_visible()
+        await step('Map turns with you: compass heading rotates the map; one tap for north up, remembered', map_turns())
 
         async def live_voice():
             await A.wait_for_timeout(450)  # let the hub finish sliding in (300 ms)

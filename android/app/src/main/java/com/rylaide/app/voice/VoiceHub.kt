@@ -28,10 +28,10 @@ class VoiceHub(context: Context, private val toServer: (ByteArray) -> Unit, priv
     @Volatile private var online = false
     var meshError: String? = null; private set
 
-    fun start(userId: String, groupId: String, muted: Boolean, noiseCancel: Boolean, sensitivity: String, online: Boolean, meshAllowed: Boolean) {
+    fun start(userId: String, groupId: String, muted: Boolean, noiseCancel: Boolean, sensitivity: String, online: Boolean, meshAllowed: Boolean, speaker: Boolean = false) {
         me = Rvp.fnv32(userId); group = Rvp.fnv32(groupId)
         this.online = online
-        engine.start(me, group, muted, noiseCancel, sensitivity)
+        engine.start(me, group, muted, noiseCancel, sensitivity, speaker)
         meshError = null
         if (meshAllowed) {
             try { mesh.start(me, group); mesh.setOnline(online) } catch (e: Exception) { meshError = e.message; Log.w("RylaideVoice", "mesh off: ${e.message}") }
@@ -44,6 +44,8 @@ class VoiceHub(context: Context, private val toServer: (ByteArray) -> Unit, priv
     val muted: Boolean get() = engine.muted
     fun setNoiseCancel(on: Boolean) = engine.setNoiseCancel(on)
     fun setSensitivity(s: String) = engine.setSensitivity(s)
+    /** "speaker" (car rides) or "headset". */
+    fun setOutput(out: String) = engine.setSpeaker(out == "speaker")
     fun setOnline(on: Boolean) { online = on; mesh.setOnline(on) }
 
     // ---------------------------------------------------------------- your voice

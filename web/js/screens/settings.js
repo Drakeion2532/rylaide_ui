@@ -5,7 +5,7 @@ import { h, store, native } from '../util.js';
 import { api } from '../api.js';
 import { ctx, rt, emit, setting, setSetting } from '../state.js';
 import { ACCENTS, applyTheme, currentLight } from '../theme.js';
-import { ic, button, listItem, switchEl, field, dialog, snackbar, segmented, withLoading, avatar, page, sectionTitle, sheet, VOICE_MODES } from '../ui.js';
+import { ic, button, listItem, switchEl, field, dialog, snackbar, segmented, withLoading, avatar, page, sectionTitle, sheet, VOICE_MODES, AUDIO_OUT, WATCH_NOTE } from '../ui.js';
 import { register, push, back, upTo } from '../router.js';
 import { supportEmail } from '../legal.js';
 import * as engine from '../engine.js';
@@ -187,6 +187,15 @@ register('audio', (el) => {
   const { body } = page(el, 'Audio & headset', { back });
   body.append(
     h('div', { class: 'list mt8' }, row('mic', 'Mic test', 'Check your helmet headset', 'mictest')),
+    sectionTitle('Sound comes from'),
+    h('div', { class: 'list' }, ...AUDIO_OUT.map((o) => listItem({
+      icon: o.icon, title: o.label, sub: o.sub, cls: 'audio-out', attrs: { 'data-out': o.value, role: 'radio' },
+      trail: ic(engine.audioOut() === o.value ? 'radio_button_checked' : 'radio_button_unchecked'),
+      onclick: () => { engine.setAudioOut(o.value); renderOut(); snackbar(o.value === 'speaker' ? 'Phone speaker and mic' : 'Headset'); },
+    }))),
+    h('p', { class: 'body-s variant', style: 'padding:8px 4px 0' }, WATCH_NOTE),
+    sectionTitle('Map'),
+    h('div', { class: 'list' }, listItem({ icon: 'explore', title: 'Map turns with you', sub: 'Like Google Maps: the way you face is up. Uses the compass when you’re stopped, GPS when moving.', trail: switchEl({ checked: engine.mapTurns(), label: 'Map turns with you', onchange: (v) => engine.setMapTurns(v) }) })),
     sectionTitle('Voice chat'),
     h('div', { class: 'list' },
       listItem({ icon: 'campaign', title: 'Voice chat', sub: 'On group rides your mic is open: just talk. Nothing is sent while you’re quiet.', trail: switchEl({ checked: ctx.voiceOn, label: 'Voice chat', onchange: (v) => engine.setVoiceOn(v) }) }),
@@ -195,7 +204,15 @@ register('audio', (el) => {
     h('div', { style: 'padding:16px 4px 4px' }, h('div', { class: 'title-s', style: 'padding-bottom:4px' }, 'Voice sensitivity'),
       h('p', { class: 'body-s variant', style: 'margin:0 0 8px' }, 'How loud you need to speak before your group hears you. Pick Low if wind keeps opening your mic.'),
       segmented([{ value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }], setting('voiceSensitivity', 'normal'), (v) => engine.setVoiceSensitivity(v), { label: 'Voice sensitivity' })),
-    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Pair your helmet headset with Bluetooth before you start. Rylaide uses whatever microphone and speaker your phone is using. In the Android app, voice keeps working with nearby riders when there’s no signal.'));
+    h('p', { class: 'body-s variant', style: 'padding:16px 4px 32px' }, 'Pair your helmet headset with Bluetooth before you start. In the Android app, voice keeps working with nearby riders when there’s no signal.'));
+  function renderOut() {
+    el.querySelectorAll('.audio-out').forEach((r) => {
+      const on = r.dataset.out === engine.audioOut();
+      r.setAttribute('aria-checked', String(on));
+      r.querySelector('.trail').replaceChildren(ic(on ? 'radio_button_checked' : 'radio_button_unchecked'));
+    });
+  }
+  renderOut();
 });
 
 // ---------------------------------------------------------------- 54 Offline & storage

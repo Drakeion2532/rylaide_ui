@@ -30,6 +30,10 @@ import java.util.concurrent.Executors
 @TargetApi(Build.VERSION_CODES.Q)
 class VoiceEngine(private val context: Context, private val listener: Listener) {
 
+    companion object {
+        private val WATCH_NAME = Regex("watch|\\bband\\b|fitbit|amazfit|galaxy fit|wear ?os|gear s|noisefit|fire-boltt|boat wave")
+    }
+
     interface Listener {
         /** Your own voice, ready to send (ttl/flags are set by the caller per link). */
         fun onOutgoing(packet: Rvp)
@@ -46,8 +50,10 @@ class VoiceEngine(private val context: Context, private val listener: Listener) 
     private val vad = VoiceDetector()
 
     // ---------------------------------------------------------------- lifecycle
-    fun start(sender: Long, group: Long, muted: Boolean, noiseCancel: Boolean, sensitivity: String) {
+    fun start(sender: Long, group: Long, muted: Boolean, noiseCancel: Boolean, sensitivity: String, speaker: Boolean = false) {
         this.sender = sender; this.group = group
+        this.speaker = speaker
+        if (running) route()
         this.noiseCancel = noiseCancel
         vad.setSensitivity(sensitivity)
         if (!running) {
@@ -76,22 +82,68 @@ class VoiceEngine(private val context: Context, private val listener: Listener) 
     fun setNoiseCancel(on: Boolean) { noiseCancel = on; effects.forEach { runCatching { it.enabled = on } } }
     fun setSensitivity(s: String) = vad.setSensitivity(s)
 
-    // ---------------------------------------------------------------- headset routing
+    // ---------------------------------------------------------------- where the sound goes
+    // Headset (default): wired earphones → Bluetooth helmet headset → phone speaker as a last resort.
+    // Phone speaker (car rides): the phone's speaker and the phone's own mic.
+    // A smartwatch is never used, for sound or for the mic, even when it's connected for calls.
+    @Volatile private var speaker = false
+    private val deviceWatcher = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) { if (running) route() }
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) { if (running) route() }
+    }
+
+    fun setSpeaker(on: Boolean) { speaker = on; if (running) route() }
+
     private fun routeToHeadset(on: Boolean) {
         if (!on) {
+            runCatching { audio.unregisterAudioDeviceCallback(deviceWatcher) }
             if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
-            else @Suppress("DEPRECATION") { runCatching { audio.stopBluetoothSco() }; audio.isBluetoothScoOn = false }
+            else @Suppress("DEPRECATION") { runCatching { audio.stopBluetoothSco() }; audio.isBluetoothScoOn = false; audio.isSpeakerphoneOn = false }
             audio.mode = AudioManager.MODE_NORMAL
             return
         }
         audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        audio.registerAudioDeviceCallback(deviceWatcher, android.os.Handler(android.os.Looper.getMainLooper())) // a headset connected mid-ride
+        route()
+    }
+
+    /** Re-picks the output (and with it the mic) for the current choice and connected devices. */
+    private fun route() {
+        val wired = listOf(AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_USB_HEADSET)
         if (Build.VERSION.SDK_INT >= 31) {
-            val prefer = listOf(AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET)
-            val devices = audio.availableCommunicationDevices
-            prefer.firstNotNullOfOrNull { t -> devices.firstOrNull { it.type == t } }?.let { audio.setCommunicationDevice(it) }
-        } else @Suppress("DEPRECATION") {
-            if (audio.isBluetoothScoAvailableOffCall) { runCatching { audio.startBluetoothSco() }; audio.isBluetoothScoOn = true }
+            val devices = audio.availableCommunicationDevices.filter { !isWatch(it) }
+            val builtIn = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            val pick = if (speaker) builtIn else
+                devices.firstOrNull { it.type in wired }
+                    ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLE_HEADSET }
+                    ?: devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+                    ?: builtIn
+            if (pick != null) audio.setCommunicationDevice(pick)
+            return
         }
+        @Suppress("DEPRECATION") run {
+            val outs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val hasWired = outs.any { it.type in wired }
+            val headset = outs.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO && !isWatch(it) }
+            when {
+                speaker || (!hasWired && !headset) -> { runCatching { audio.stopBluetoothSco() }; audio.isBluetoothScoOn = false; audio.isSpeakerphoneOn = true }
+                hasWired -> { runCatching { audio.stopBluetoothSco() }; audio.isBluetoothScoOn = false; audio.isSpeakerphoneOn = false }
+                else -> { audio.isSpeakerphoneOn = false; runCatching { audio.startBluetoothSco() }; audio.isBluetoothScoOn = true }
+            }
+        }
+    }
+
+    /** Smartwatches and fitness bands: by Bluetooth device class, or by name when the class isn't readable. */
+    private fun isWatch(d: AudioDeviceInfo): Boolean {
+        val name = d.productName?.toString()?.lowercase() ?: ""
+        if (WATCH_NAME.containsMatchIn(name)) return true
+        val bluetooth = d.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || d.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            (Build.VERSION.SDK_INT >= 31 && d.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        if (!bluetooth || Build.VERSION.SDK_INT < 28 || d.address.isNullOrBlank()) return false
+        return try {
+            val bt = (context.getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager).adapter
+            bt?.getRemoteDevice(d.address)?.bluetoothClass?.majorDeviceClass == android.bluetooth.BluetoothClass.Device.Major.WEARABLE
+        } catch (e: Exception) { false } // no Nearby devices permission: the name check above still applies
     }
 
     // ---------------------------------------------------------------- capture

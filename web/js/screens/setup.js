@@ -8,7 +8,7 @@
 import { h, store, localDate, haversine, fmtKm, etaShort, fmtDist, fmtInt } from '../util.js';
 import { api } from '../api.js';
 import { ctx, emit, onMany } from '../state.js';
-import { ic, button, iconButton, listItem, avatar, checkbox, ring, snackbar, withLoading, sheet, segmented, VOICE_MODES } from '../ui.js';
+import { ic, button, iconButton, listItem, avatar, checkbox, ring, snackbar, withLoading, sheet, segmented, VOICE_MODES, AUDIO_OUT, WATCH_NOTE } from '../ui.js';
 import { register, push, back, tab } from '../router.js';
 import { RideMap } from '../map.js';
 import { MicTest } from '../voice.js';
@@ -309,11 +309,15 @@ register('setup', (el, params) => {
     const micLabel = h('span', { class: 'body-m variant' }, 'Checking your mic…');
     const test = new MicTest({ onLevel: (l) => { meter.style.width = `${Math.round(l * 100)}%`; if (l > 0.08) micLabel.textContent = 'Mic working'; }, onStatus: () => {} });
     test.start(store.get('micId', '')).catch((e) => (micLabel.textContent = e.message));
+    const outNote = h('p', { class: 'body-s variant', style: 'padding:8px 4px 0;margin:0' }, `${AUDIO_OUT.find((o) => o.value === engine.audioOut()).sub}. ${WATCH_NOTE}`);
     box.append(h('div', { class: 'screen-body pad' },
       h('h1', { class: 'headline-m', style: 'margin:8px 0 16px' }, 'Check your headset'),
       h('div', { class: 'list' }, listItem({ icon: 'volume_up', title: 'Play a direction', sub: 'You should hear it in your helmet', trail: ic('play_arrow'), onclick: () => engine.speak('In 300 metres, bear left onto Ring Road.', 'nav', { force: true }) })),
       h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, plan.mode === 'group' ? 'Mic check · your group hears this' : 'Mic check'),
       h('div', { class: 'mini-meter' }, ic('headset_mic'), h('div', { class: 'progress-linear' }, meter), micLabel),
+      h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Sound comes from'),
+      segmented(AUDIO_OUT.map((o) => ({ value: o.value, label: o.label })), engine.audioOut(), (v) => { engine.setAudioOut(v); outNote.textContent = AUDIO_OUT.find((o) => o.value === v).sub + '.'; }, { label: 'Sound comes from' }),
+      outNote,
       h('div', { class: 'section-label title-s', style: 'padding-left:4px' }, 'Voice guidance'),
       segmented(VOICE_MODES.map((m) => ({ value: m.value, label: m.label })), engine.voiceGuide(), (v) => engine.setVoiceGuide(v), { label: 'Voice guidance' }),
       h('p', { class: 'body-s variant', style: 'padding:8px 4px 0' }, 'You can change this on the map any time with the speaker button.')),

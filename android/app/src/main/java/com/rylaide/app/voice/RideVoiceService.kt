@@ -71,6 +71,7 @@ class RideVoiceService : Service() {
                     muted = cfg.optBoolean("muted", false), noiseCancel = cfg.optBoolean("noiseCancel", true),
                     sensitivity = cfg.optString("sensitivity", "normal"), online = cfg.optBoolean("online", true),
                     meshAllowed = granted(this, *meshPermissions()),
+                    speaker = cfg.optString("audioOut", "headset") == "speaker",
                 )
                 notifyState()
             }

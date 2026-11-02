@@ -43,6 +43,7 @@ const isNight = () => !!document.documentElement.dataset.light;
 export class RideMap {
   constructor(el, { interactive = true, center, zoom = 14, onFollowChange } = {}) {
     this.el = el; this.interactive = interactive; this.center = center; this.zoom = zoom;
+    el.__rideMap = this; // for tests and debugging
     this.onFollowChange = onFollowChange || (() => {});
     this.riders = new Map(); this.labels = []; this.queue = []; this.ready = false; this.follow = true;
   }
@@ -105,11 +106,69 @@ export class RideMap {
         this.me = new window.maplibregl.Marker({ element: this.meEl, rotationAlignment: 'map' }).setLngLat([pos.lng, pos.lat]).addTo(this.map);
       }
       this.me.setLngLat([pos.lng, pos.lat]);
-      const moving = Number.isFinite(pos.heading) && (pos.speed ?? 0) > 1;
-      this.meEl.querySelector('.cone').hidden = !moving;
-      this.me.setRotation(moving ? pos.heading : 0);
-      if (this.follow) this.map.easeTo({ center: [pos.lng, pos.lat], duration: 600 });
+      if (this.heading == null) {
+        const moving = Number.isFinite(pos.heading) && (pos.speed ?? 0) > 1;
+        this.meEl.querySelector('.cone').hidden = !moving;
+        this.me.setRotation(moving ? pos.heading : 0);
+      }
+      this.target = [pos.lng, pos.lat];
+      if (this.follow) this.glide();
     });
+  }
+
+  /**
+   * Which way you're facing (heading.js). The arrow always points that way; with "map turns with me" on,
+   * the map rotates so that direction is up and your arrow sits low on the screen, showing more road ahead.
+   */
+  setHeading(deg) {
+    this.when(() => {
+      this.heading = deg;
+      if (this.me) { this.me.setRotation(deg ?? 0); this.meEl.querySelector('.cone').hidden = deg == null; }
+      if (this.follow && this.headingUp) this.glide();
+    });
+  }
+
+  setHeadingUp(on) {
+    this.headingUp = !!on;
+    this.when(() => {
+      this.applyPadding();
+      if (!on) this.map.easeTo({ bearing: 0, duration: 400 });
+      else if (this.follow) this.glide();
+    });
+  }
+  /** Space covered at the bottom (the full-screen ride panel), so you're never drawn underneath it. */
+  setPadBottom(px) { this.padBottom = px; this.when(() => this.applyPadding()); }
+  applyPadding() {
+    const bottom = this.padBottom || 0;
+    const free = (this.el.clientHeight || 400) - bottom;
+    this.map.setPadding({ top: this.headingUp ? Math.round(free * 0.34) : 0, bottom, left: 0, right: 0 });
+  }
+
+  /** Smoothly moves and turns the camera toward where you are and which way you face, frame by frame. */
+  glide() {
+    if (this.gliding || !this.map) return;
+    this.gliding = true;
+    let t0 = performance.now();
+    const step = (now) => {
+      const m = this.map;
+      if (!m || !this.follow) { this.gliding = false; return; }
+      const dt = Math.min(0.1, (now - t0) / 1000); t0 = now;
+      const c = m.getCenter();
+      const tgt = this.target || [c.lng, c.lat];
+      const k = 1 - Math.exp(-dt / 0.35);          // position: ~0.35 s to settle
+      const lng = c.lng + (tgt[0] - c.lng) * k, lat = c.lat + (tgt[1] - c.lat) * k;
+      const want = this.headingUp && this.heading != null ? this.heading : 0;
+      const b = m.getBearing();
+      const diff = ((want - b + 540) % 360) - 180;  // shortest way round
+      const kb = 1 - Math.exp(-dt / 0.25);         // turning: ~0.25 s
+      const zoomTo = this.targetZoom;
+      const z = m.getZoom(), zNext = zoomTo != null ? z + (zoomTo - z) * k : z;
+      m.jumpTo({ center: [lng, lat], bearing: b + diff * kb, zoom: zNext });
+      const still = Math.abs(tgt[0] - lng) < 1e-7 && Math.abs(tgt[1] - lat) < 1e-7 && Math.abs(diff) < 0.3 && (zoomTo == null || Math.abs(zoomTo - zNext) < 0.01);
+      if (still) { this.targetZoom = null; this.gliding = false; return; }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   upsertRider(r, { sos } = {}) {
@@ -136,8 +195,13 @@ export class RideMap {
   markStale(ms) { const now = Date.now(); for (const m of this.riders.values()) m.el.classList.toggle('stale', now - (m.data?.ts || 0) > ms); }
   removeRider(id) { const m = this.riders.get(id); if (m) { m.marker.remove(); this.riders.delete(id); } }
 
-  setFollow(on) { this.follow = on; this.onFollowChange(on); }
-  centerOn(lng, lat, zoom = 15) { this.when(() => this.map.easeTo({ center: [lng, lat], zoom, duration: 500 })); }
+  setFollow(on) { this.follow = on; this.onFollowChange(on); if (on) this.when(() => this.glide()); }
+  centerOn(lng, lat, zoom = 15) {
+    this.when(() => {
+      if (this.follow) { this.target = [lng, lat]; this.targetZoom = zoom; this.glide(); }
+      else this.map.easeTo({ center: [lng, lat], zoom, duration: 500 });
+    });
+  }
   fitAll(extra = []) {
     this.when(() => {
       const pts = [...this.riders.values()].map((m) => [m.data.lng, m.data.lat]);
@@ -147,7 +211,7 @@ export class RideMap {
       if (pts.length === 1) return this.map.easeTo({ center: pts[0], zoom: 15 });
       const b = new window.maplibregl.LngLatBounds(pts[0], pts[0]);
       pts.forEach((p) => b.extend(p));
-      this.map.fitBounds(b, { padding: 70, maxZoom: 16, duration: 600 });
+      this.map.fitBounds(b, { padding: 70, maxZoom: 16, duration: 600, bearing: 0 });
     });
   }
 
@@ -181,7 +245,7 @@ export class RideMap {
       coords.forEach((p) => b.extend(p));
       const box = this.el.getBoundingClientRect();
       const pad = typeof padding === 'number' ? padding : { ...padding, bottom: Math.min(padding.bottom, box.height * 0.55), top: Math.min(padding.top, box.height * 0.2) };
-      this.map.fitBounds(b, { padding: pad, duration: 700, maxZoom: 16 });
+      this.map.fitBounds(b, { padding: pad, duration: 700, maxZoom: 16, bearing: 0 });
     });
   }
   setDestination(lng, lat) {

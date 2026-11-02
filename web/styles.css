@@ -708,7 +708,9 @@ h1, h2, h3, p { margin: 0; }
 /* ---------------------------------------------------------------- voice guidance button (Google-Maps style) */
 .vg { position: relative; }
 .vg-on-card { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); z-index: 3; }
-.vg-btn { box-shadow: var(--shadow-2); }
+.vg-btn, .compass-btn { box-shadow: var(--shadow-2); }
+.compass-btn.on { background: var(--primary); color: var(--on-primary); }
+.vg-on-card.stack { display: flex; flex-direction: column; }
 .vg-btn[data-voice-guide=off] { background: var(--error-container); color: var(--on-error-container); }
 .vg-btn[data-voice-guide=alerts] { background: var(--warning-container); color: var(--on-warning-container); }
 .vg-menu { position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); z-index: 6; width: 244px; display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--shape-l); background: var(--surface-container-high); box-shadow: var(--shadow-3); animation: rise 180ms var(--ease-decel); }

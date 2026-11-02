@@ -34,6 +34,8 @@ SOS countdown and ride summary.
 - **Voice:** open mic with a voice detector (sends only while you speak, learns wind and engine noise; sensitivity Low/Normal/High), 20 ms Opus frames at 24 kbps, 60 ms jitter buffer, riders mixed so two can talk at once (about 0.2 s mouth-to-ear online). Noise cancellation: wind filter + RNNoise (AI noise removal) + compressor in the browser; the phone's echo cancel and noise suppression in the Android app
 - **Offline voice (Android app, iPhone app to follow):** nearby riders' phones link over Bluetooth LE and relay each other's voice (3 hops); a rider with signal carries offline riders' voice to the rest of the group and back. Same packet on every link and platform: see [docs/offline-voice.md](docs/offline-voice.md)
 - **Voice guidance button on the map** (like Google Maps): Sound on · Alerts only · Muted
+- **Map turns with you** (compass button on the map, on by default): the way you face is up. Phone compass while stopped, GPS direction while moving (more reliable on a bike); one tap for north up
+- **Sound comes from** the helmet headset (default) or the phone speaker for car rides, which uses the phone's own mic. A smartwatch's mic and speaker are never used, even when it's connected for calls
 
 **Screen flow** follows the Figma *Navigation map · for development*:
 - Account: 01 → 02–04 → 04b Before you start → 05 Sign in or 06 Create account → 07 Setup → 07a Bikes (several) · 07b Permissions → 08 Home
@@ -109,7 +111,7 @@ api.call({ it.signIn("K7QM-4XPA"); it.vehicles() }) { result ->
 
 ```bash
 npm test                 # 27 backend tests (+2 database tests with TEST_DATABASE_URL set): accounts, bike + photo, groups, chat, voice, SOS, rides, fuel, map services, limits, restarts
-npm run test:e2e         # 20 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
+npm run test:e2e         # 21 browser flows with two riders, fake mic and GPS (needs Python + Playwright)
 npm run test:all
 ```
 
@@ -237,6 +239,7 @@ server/   Express + WebSocket backend (app.js), JSON store
 web/      The app: index.html, styles.css (Figma tokens + components), service worker
 web/js/   app (boot, nav), router, engine (GPS, ride, navigation, voice, SOS), ui (components), theme, map, voice
           livevoice.js (open mic, voice detector, Opus, RVP packets, mixing) · rv-capture.js (20 ms mic frames)
+          heading.js (compass + GPS heading for the map that turns with you)
 web/js/screens/  onboarding (+ terms, sign in), home, groups, groupinfo (info, members, expenses, settings), history (+ summary),
           vehicles (garage, vehicle, service), garage (fuel, contacts, mic test), settings (hub + pages, customer care),
           setup, ride, extra (crash, arrived, nearby, drop a pin)

@@ -5,6 +5,7 @@ import { ctx, rt, emit, setting, setSetting } from './state.js';
 import { PushToTalk, VoicePlayer } from './voice.js';
 import { LiveMic, LivePlayer, RVP, fnv32 } from './livevoice.js';
 import { setThemePosition } from './theme.js';
+import * as compass from './heading.js';
 
 // ---------------------------------------------------------------- groups
 export async function loadGroups() {
@@ -190,6 +191,7 @@ function onPosition(p) {
   if (wasWeak && ctx.gps === 'ok' && ctx.ride) emit('banner', { tone: 'ok', icon: 'my_location', title: 'GPS is back', sub: 'You’re on route', ms: 3000 });
   emit('pos', pos);
   emit('gps', ctx.gps);
+  compass.onPosition();
   sendLoc(false);
   updateRide(pos);
   updateNav(pos);
@@ -231,6 +233,7 @@ export function startRide({ dest = null, route = null, solo = !ctx.group, pillio
   store.set('activeRide', { startedAt: ctx.ride.startedAt });
   requestWakeLock();
   crash.start();
+  if (mapTurns()) compass.startCompass();
   syncVoice();
   // Group ride: tell the riders picked in 17 Select riders (they get "… started a ride · Join").
   if (!solo && ctx.group) {
@@ -324,6 +327,7 @@ export async function endRide() {
   store.del('activeRide');
   releaseWakeLock();
   crash.stop();
+  compass.stopCompass();
   syncVoice();
   if (r.groupId) api.del(`/api/groups/${r.groupId}/ride`).catch(() => {});
   emit('ride', null);
@@ -437,6 +441,16 @@ async function requestWakeLock() { try { native()?.keepAwake(true); wakeLock = a
 function releaseWakeLock() { try { native()?.keepAwake(false); } catch { /* ignore */ } wakeLock?.release().catch(() => {}); wakeLock = null; }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ctx.ride) requestWakeLock(); });
 
+// ---------------------------------------------------------------- map turns with you
+/** Heading-up map (compass when stopped, GPS direction when moving). On by default during rides. */
+export const mapTurns = () => setting('mapHeading', true);
+export async function setMapTurns(on) {
+  setSetting('mapHeading', !!on);
+  // Called from a tap, so iPhone can ask for motion & orientation access here.
+  if (on) { const ok = await compass.startCompass(); if (!ok && !ctx.pos?.heading) emit('snack', 'Compass isn’t available. The map will turn once you’re moving.'); }
+  emit('map-turns', !!on);
+}
+
 // ---------------------------------------------------------------- voice
 // Live group voice: the mic is open for the whole group ride and you just talk. One tap mutes or unmutes,
 // and that choice is remembered. Nothing is held or pressed while riding.
@@ -485,7 +499,7 @@ export function syncVoice() {
     if (want) {
       nv.voiceStart(JSON.stringify({
         userId: ctx.user.id, groupId: ctx.group.id, groupName: ctx.group.name, online: rt.status === 'online',
-        muted: ctx.micMuted, noiseCancel: ctx.noiseCancel, sensitivity: setting('voiceSensitivity', 'normal'),
+        muted: ctx.micMuted, noiseCancel: ctx.noiseCancel, sensitivity: setting('voiceSensitivity', 'normal'), audioOut: audioOut(),
       }));
       if (!ctx.micMuted && !ctx.micState) setMicState('starting');
     } else { nv.voiceStop(); ctx.micState = null; emit('mic', micState()); }
@@ -571,6 +585,15 @@ export function setNoiseCancel(on) {
   store.set('noiseCancel', ctx.noiseCancel);
   ptt.chain.setNoiseCancel(ctx.noiseCancel);
   nativeVoice()?.voiceConfig(JSON.stringify({ noiseCancel: ctx.noiseCancel }));
+}
+/**
+ * Where voice and directions play: 'headset' (helmet headset or earphones; the default) or 'speaker'
+ * (the phone's speaker and mic, for car rides). A smartwatch's speaker and mic are never used.
+ */
+export const audioOut = () => setting('audioOut', 'headset');
+export function setAudioOut(v) {
+  setSetting('audioOut', v === 'speaker' ? 'speaker' : 'headset');
+  nativeVoice()?.voiceConfig(JSON.stringify({ audioOut: audioOut() }));
 }
 export function setVoiceSensitivity(level) {
   setSetting('voiceSensitivity', level);

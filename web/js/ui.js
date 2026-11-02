@@ -245,6 +245,13 @@ export const VOICE_MODES = [
   { value: 'alerts', icon: 'notification_important', label: 'Alerts only', sub: 'Safety alerts, no directions' },
   { value: 'off', icon: 'volume_off', label: 'Muted', sub: 'No voice' },
 ];
+/** Where sound comes from (setup step 21 and Settings → Audio & headset). */
+export const AUDIO_OUT = [
+  { value: 'headset', label: 'Headset', icon: 'headset_mic', sub: 'Helmet headset or earphones, with its mic' },
+  { value: 'speaker', label: 'Phone speaker', icon: 'volume_up', sub: 'For car rides. Uses the phone’s own mic' },
+];
+export const WATCH_NOTE = 'A smartwatch’s mic and speaker are never used, even if it’s connected to your phone.';
+
 export function voiceGuideButton({ getMode, setMode }) {
   const wrap = h('div', { class: 'vg' });
   const icon = () => VOICE_MODES.find((m) => m.value === getMode())?.icon || 'volume_up';

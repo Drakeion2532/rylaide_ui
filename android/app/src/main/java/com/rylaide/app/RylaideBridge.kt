@@ -100,7 +100,7 @@ class RylaideBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun voiceSupported(): Boolean = RideVoiceService.supported()
 
-    /** {userId, groupId, groupName, muted, noiseCancel, sensitivity, online} */
+    /** {userId, groupId, groupName, muted, noiseCancel, sensitivity, online, audioOut} */
     @JavascriptInterface
     fun voiceStart(config: String?) { if (RideVoiceService.supported()) activity.startVoice(config ?: "{}") }
 
@@ -118,7 +118,7 @@ class RylaideBridge(private val activity: MainActivity) {
         hub.fromServer(bytes)
     }
 
-    /** {noiseCancel?, sensitivity?, online?} */
+    /** {noiseCancel?, sensitivity?, online?, audioOut?: 'headset' | 'speaker'} */
     @JavascriptInterface
     fun voiceConfig(json: String?) {
         val hub = RideVoiceService.hub ?: return
@@ -126,6 +126,7 @@ class RylaideBridge(private val activity: MainActivity) {
         if (c.has("noiseCancel")) hub.setNoiseCancel(c.optBoolean("noiseCancel"))
         if (c.has("sensitivity")) hub.setSensitivity(c.optString("sensitivity"))
         if (c.has("online")) hub.setOnline(c.optBoolean("online"))
+        if (c.has("audioOut")) hub.setOutput(c.optString("audioOut"))
     }
 
     fun shutdown() {

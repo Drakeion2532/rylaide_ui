@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Day · Evening · Night (Figma: "Riding conditions") and the 8 rider accents (Figma: "Accent mapping").
 // Light uses tone 40 for primary, dark uses tone 80, containers 90 / 30.
 import { store } from './util.js';

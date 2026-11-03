@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Ride setup graph (Figma navigation map → "Start a ride · 5 steps"):
 //   13 Start ride: which bike + Solo · Group · Quick ride
 //   Quick:  13 → 25q hub straight away (no destination; tracks km, time, refills) → 34q summary

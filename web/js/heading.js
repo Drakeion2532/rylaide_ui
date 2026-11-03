@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Which way the rider is facing, for a map that turns with them (like Google Maps' compass mode).
 //
 // Stopped or slow: the phone's compass (gyro + magnetometer, fused by the phone): turn the phone, the map turns.

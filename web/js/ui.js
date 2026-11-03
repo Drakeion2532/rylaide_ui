@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Components from Figma "02 — Components", as small DOM builders.
 import { h, initials, vibrate } from './util.js';
 import { ICONS } from './icons.js';

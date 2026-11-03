@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 """End-to-end test of the Figma-based UI: two riders on two phones, fake mic + GPS, map services mocked.
 
 Run:  npm run test:e2e   (starts the mock services and server for you)

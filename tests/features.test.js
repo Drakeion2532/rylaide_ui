@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Garage (multi-vehicle, service), groups (info, members, expenses, shared, rides, live ride), accounts (sign in, delete), nearby, reverse geocode.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');

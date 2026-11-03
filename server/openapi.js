@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // OpenAPI 3 description of the Rylaide API, served at /api/v1/openapi.json and readable at /api/docs.
 // The Android app's Kotlin client (android/app/src/main/java/com/rylaide/app/api/RylaideApi.kt) follows this.
 const E = (method, path, tag, summary, { body, auth = true, res, query } = {}) => ({ method, path, tag, summary, body, auth, res, query });

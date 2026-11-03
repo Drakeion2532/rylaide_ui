@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // One navigation graph (Figma: "Navigation map · for development").
 // Four bottom tabs are top level; every other screen has one fixed parent; Back goes to that parent.
 // Tabs fade through (200 ms); forward screens slide (300 ms ease-out).

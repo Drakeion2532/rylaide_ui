@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // MapLibre wrapper styled to Figma "Map / Base": neutral grey streets, primary route, dashed grey alternatives,
 // red destination pin, blue "me" puck with heading cone. Tiles: OpenFreeMap (Positron by day, Dark at night).
 import { h, initials, etaShort } from './util.js';

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Postgres persistence for free hosting (e.g. Render free + Neon free), where the server's own disk
 // is wiped on every restart. The whole app state is one JSON row; bike photos are rows of bytes.
 // Enabled by DATABASE_URL. Without it, the JSON file (DATA_FILE) and photo folder are used as before.

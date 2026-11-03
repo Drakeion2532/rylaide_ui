@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 08 → 43 Settings → 44–59 (Figma navigation map: every settings page goes Up to 43; 43 → Home)
 //   44 Account · 45 Appearance · 46 Riding & directions · 47 Safety & SOS · 48 Location & privacy · 49 Audio & headset
 //   54 Offline & storage · 55 About (56 Terms · 57 Privacy) · 58 Customer care → 58b Rylaide Assistant → 58c fix → 58e solved / 58d contact support

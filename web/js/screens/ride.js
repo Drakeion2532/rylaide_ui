@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 25r Ride hub (Map · Speed · Group) · 25u with pillion (Map · Speed · Pillion) · 25 Full-screen map · 30 SOS countdown
 import { h, fmtDist, fmtKm, fmtEta, haversine, store, vibrate } from '../util.js';
 import { ctx, onMany } from '../state.js';

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Screens from the Figma navigation map that need the server:
 //   Garage   12 My vehicles · 11 Vehicle · 11e Add · 11f Edit · 11j Service
 //   Groups   39 Group info · 41 Members · 39c Expenses · G14 Settings · G01 Rides / Shared tabs · group ride (17 Select riders)

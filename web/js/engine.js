@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Ride engine: location, live group, recording, navigation, voice, SOS. Screens listen through state.on().
 import { store, haversine, distToLine, fmtDist, vibrate, native } from './util.js';
 import { api } from './api.js';

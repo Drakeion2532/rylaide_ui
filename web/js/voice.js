@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Voice building blocks: the processed mic chain (VoiceChain), clip streaming for browsers without WebCodecs
 // (PushToTalk, VoicePlayer) and the Mic test. Live hands-free group voice is in livevoice.js.
 //

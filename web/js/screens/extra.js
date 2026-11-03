@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 30a Possible crash detected · 32 Arrived · 16 Nearby · 22e Drop a pin
 import { h, fmtKm, durShort, haversine, vibrate } from '../util.js';
 import { api } from '../api.js';

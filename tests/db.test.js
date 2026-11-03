@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Postgres persistence (free hosting): runs only when TEST_DATABASE_URL points at an empty test database.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

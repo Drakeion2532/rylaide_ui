@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 36 History (filter by bike) → 34 Ride summary · 34q quick-ride summary (refills)
 import { h, fmtKm, durShort, fmtDay, haversine, store, shareText } from '../util.js';
 import { api } from '../api.js';

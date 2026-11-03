@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Live group voice: always-on mic with a single mute toggle. No buttons to hold while riding.
 //
 // Send:    processed mic (VoiceChain: rumble filter → RNNoise → compressor) → 20 ms frames → voice detector

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Tiny JSON-file store. Writes are debounced and atomic (write temp file, then rename).
 const fs = require('fs');
 const path = require('path');

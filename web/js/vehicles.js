@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Vehicle catalogue: what riders in India actually ride, with a body type for each model.
 // The type picks the Home hero picture when the owner hasn't added their own photo.
 

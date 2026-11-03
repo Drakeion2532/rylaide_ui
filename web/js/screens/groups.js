@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 38 My groups → G01 Group space (Chat · Rides · Members · Shared are tabs) → 39 Group info (groupinfo.js) · 16 Nearby
 import { h, fmtDist, haversine, fmtTime, fmtKm, durShort, shareText } from '../util.js';
 import { api } from '../api.js';

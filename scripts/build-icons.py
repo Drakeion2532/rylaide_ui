@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 """Subset Material Symbols Rounded to the icons the app uses.
 
 Scans web/**/*.js for quoted snake_case words, keeps the ones that are real icon names,

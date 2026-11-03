@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Shared bike form: make/model with suggestions from the catalogue, type auto-detected, odometer, owner photo.
 import { h } from './util.js';
 import { ic, field, button, snackbar } from './ui.js';

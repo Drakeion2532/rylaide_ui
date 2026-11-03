@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 04b Before you start · 56 Terms of use · 57 Privacy. Plain-language prototype text: have it reviewed before a public launch.
 // Support email comes from the server (SUPPORT_EMAIL setting). Empty until the Rylaide address is ready;
 // meanwhile problem reports go to Rylaide's server from Settings → Customer care.

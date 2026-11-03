@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Auth graph (Figma navigation map → "Account · first run"):
 //   01 Splash → 02–04 Onboarding → 04b Before you start → 05 Sign in or 06 Create account → 07 Setup → 07a Bikes · 07b Permissions → 08 Home
 //   Up: 05d → 05 · 05e → 05d · 06 → 05 · 07a → 07. After sign-in the auth graph is popped: Back never returns to sign-in.

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Groups graph (Figma navigation map): G01 Group space → 39 Group info → 41 Members · 39c Expenses · G14 Settings; Invite
 import { h, fmtDist, haversine, shareText } from '../util.js';
 import { api } from '../api.js';

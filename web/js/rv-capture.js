@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // AudioWorklet: cuts the processed mic into 20 ms frames (960 samples at 48 kHz) for the Opus encoder.
 class RvCapture extends AudioWorkletProcessor {
   constructor() {

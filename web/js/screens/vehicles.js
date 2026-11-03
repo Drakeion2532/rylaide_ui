@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Garage graph (Figma navigation map): 12 My vehicles → 11 Vehicle → 11d Fuel log → 11e Add / 11f Edit · 11j Service
 import { h, fmtInt, store, localDate } from '../util.js';
 import { api } from '../api.js';

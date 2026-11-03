@@ -257,3 +257,9 @@ assets/   Logo and icon sets
 ```
 
 Map data © OpenStreetMap contributors · tiles by OpenFreeMap · weather by MET Norway.
+
+## Licence and credit
+
+© 2026 [Shubhan Punde](https://github.com/Drakeion2532). All rights reserved (see [NOTICE](NOTICE)). The code is public to read, not to copy or present as anyone else's work.
+
+<sub>Project ID: sp2532-ce395384fbda</sub>

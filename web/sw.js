@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // Offline shell: the app opens without signal; live features reconnect when it returns.
 const VERSION = 'rylaide-v10';
 const SHELL = [

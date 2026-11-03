@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Shubhan Punde · https://github.com/Drakeion2532/rylaide_ui · All rights reserved · sp2532-ce395384fbda
 // 11d Fuel log · 51 Emergency contacts · Mic test · Home's quick bike editor (Garage tab and vehicles: vehicles.js; Settings: settings.js)
 import { h, fmtInt, store, localDate, native } from '../util.js';
 import { api } from '../api.js';
